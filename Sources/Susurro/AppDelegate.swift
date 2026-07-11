@@ -10,9 +10,12 @@ func slog(_ msg: String) {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var recordItem: NSMenuItem!
+    private var hotkeyItem: NSMenuItem!
 
     private let recorder = AudioRecorder()
+    private let hotkey = HotkeyMonitor()
     private var engine: WhisperEngine?
+    private var axPollTimer: Timer?
 
     // Temporary until ModelManager (M4)
     private let modelPath = NSString(string: "~/Git_Repos/whisper.cpp/models/ggml-small.en.bin").expandingTildeInPath
@@ -41,6 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recordItem.isEnabled = false
         menu.addItem(recordItem)
 
+        hotkeyItem = NSMenuItem(title: "Hotkey: checking permission…", action: nil, keyEquivalent: "")
+        hotkeyItem.isEnabled = false
+        menu.addItem(hotkeyItem)
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(
             title: "Quit Susurro",
@@ -49,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ))
         menu.autoenablesItems = false
         statusItem.menu = menu
+
+        setUpHotkey()
 
         // Request mic permission up front, decoupled from the first recording,
         // so the permission dialog can't interrupt an in-flight engine start.
@@ -80,6 +89,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
+
+    // MARK: - Hotkey (push-to-talk)
+
+    private func setUpHotkey() {
+        hotkey.onPress = { [weak self] in self?.pttPressed() }
+        hotkey.onRelease = { [weak self] in self?.pttReleased() }
+
+        if HotkeyMonitor.ensureAccessibility(prompt: true), hotkey.start() {
+            hotkeyGranted()
+        } else {
+            slog("accessibility not granted yet — polling")
+            hotkeyItem.title = "Hotkey: grant Accessibility in System Settings"
+            axPollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if HotkeyMonitor.ensureAccessibility(prompt: false), self.hotkey.start() {
+                        self.axPollTimer?.invalidate()
+                        self.axPollTimer = nil
+                        self.hotkeyGranted()
+                    }
+                }
+            }
+        }
+    }
+
+    private func hotkeyGranted() {
+        slog("event tap active")
+        hotkeyItem.title = "Hotkey: hold Right Option to dictate"
+    }
+
+    private func pttPressed() {
+        guard engine != nil, !recorder.isRecording else { return }
+        do {
+            try recorder.start()
+            slog("ptt: recording")
+            setIcon(recording: true)
+        } catch {
+            slog("ptt: recorder.start failed: \(error)")
+        }
+    }
+
+    private func pttReleased() {
+        guard recorder.isRecording else { return }
+        let samples = recorder.stop()
+        setIcon(recording: false)
+        slog("ptt: stopped (\(samples.count) samples), transcribing")
+        guard let engine else { return }
+        Task.detached(priority: .userInitiated) {
+            let text = (try? engine.transcribe(samples: samples)) ?? ""
+            slog("ptt: transcript: \(text)")
+            await MainActor.run {
+                guard !text.isEmpty else { return }
+                TextInjector.type(text)
+                // Clipboard as a bonus safety net until history exists (v2)
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(text, forType: .string)
+            }
+        }
+    }
+
+    private func setIcon(recording: Bool) {
+        guard let button = statusItem.button else { return }
+        if recording {
+            // Red filled symbol — unmistakable while the mic is hot
+            let config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
+            button.image = NSImage(
+                systemSymbolName: "record.circle.fill",
+                accessibilityDescription: "Susurro — recording"
+            )?.withSymbolConfiguration(config)
+            button.image?.isTemplate = false
+        } else {
+            button.image = NSImage(
+                systemSymbolName: "waveform.circle",
+                accessibilityDescription: "Susurro"
+            )
+        }
+    }
+
+    // MARK: - Test recording via menu (kept until M1.6)
 
     @objc private func toggleTestRecording() {
         if recorder.isRecording {
