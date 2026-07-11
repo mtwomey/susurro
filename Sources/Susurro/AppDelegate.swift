@@ -215,9 +215,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             rebuildModelMenu()
             loadEngine() // hot-swap
         } else {
+            guard !models.isDownloading(model) else {
+                toast.show("\(model.id) is already downloading")
+                return
+            }
             // Clicking a model = "I want to use it": instant toast acknowledgment,
-            // download, then auto-switch + notification (attention may be elsewhere)
-            toast.show("⬇ Downloading \(model.id) — still on \(models.activeModelID) until it's ready")
+            // download, then auto-switch + notification (attention may be elsewhere).
+            // Honest about current state: activeModelID has a default value even
+            // when no model file exists at all.
+            if models.activeModelPath() != nil {
+                toast.show("⬇ Downloading \(model.id) — still on \(models.activeModelID) until it's ready")
+            } else {
+                toast.show("⬇ Downloading \(model.id) — no model active yet; dictation starts when it's ready")
+            }
             Task { [weak self] in
                 do {
                     try await self?.models.download(model)
@@ -251,10 +261,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Fresh install: no model anywhere — fetch the default automatically rather
+    /// than leaving the app silently inert.
+    private func autoDownloadDefaultModel() {
+        guard let small = ModelManager.catalog.first(where: { $0.id == "small.en" }),
+              !models.isDownloading(small) else { return }
+        toast.show("⬇ First run: downloading the small.en model (466 MB) — dictation will be ready shortly")
+        Task { [weak self] in
+            do {
+                try await self?.models.download(small)
+                guard let self else { return }
+                // Don't stomp a model the user explicitly chose in the meantime
+                if self.models.activeModelPath() == nil || self.engine == nil {
+                    self.models.activeModelID = small.id
+                    self.loadEngine()
+                    self.notify("Susurro is ready",
+                                "small.en downloaded — hold your push-to-talk key to dictate.")
+                }
+                self.rebuildModelMenu()
+            } catch {
+                slog("auto-download failed: \(error)")
+                self?.recordItem.title = "Model download failed — retry from the Model menu"
+                self?.notify("Model download failed",
+                             "Open the Model menu to retry. \(error.localizedDescription)")
+                self?.rebuildModelMenu()
+            }
+        }
+    }
+
     private func loadEngine() {
         guard let path = models.activeModelPath() else {
-            recordItem.title = "No model — download one from the Model menu"
+            recordItem.title = "Downloading model…"
             recordItem.isEnabled = false
+            autoDownloadDefaultModel()
             return
         }
         engine = nil
