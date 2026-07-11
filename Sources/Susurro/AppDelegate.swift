@@ -24,6 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let models = ModelManager()
     private let toast = ToastPanel()
     private var modelMenu: NSMenu!
+    private var cleanupItem: NSMenuItem!
+
+    private var cleaner: (any TextCleaning)?
+    private var cleanupEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "llmCleanupEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "llmCleanupEnabled") }
+    }
     private let hotkey = HotkeyMonitor()
     private var engine: WhisperEngine?
     private var axPollTimer: Timer?
@@ -85,6 +92,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         keyItem.submenu = keyMenu
         menu.addItem(keyItem)
 
+        cleanupItem = NSMenuItem(title: "AI Cleanup", action: #selector(cleanupAction), keyEquivalent: "")
+        cleanupItem.target = self
+        menu.addItem(cleanupItem)
+        refreshCleanupItem()
+        if #available(macOS 26.0, *) {
+            let cleaner = TranscriptCleaner()
+            self.cleaner = cleaner
+            if cleanupEnabled {
+                Task.detached { cleaner.prewarm() }
+            }
+        }
+
         let loginItem = NSMenuItem(
             title: "Start at Login",
             action: #selector(toggleLoginItem(_:)),
@@ -102,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             keyEquivalent: "q"
         ))
         menu.autoenablesItems = false
+        menu.delegate = self // refresh AI-cleanup availability when menu opens
         statusItem.menu = menu
 
         setUpHotkey()
@@ -142,8 +162,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Models
 
     nonisolated func menuNeedsUpdate(_ menu: NSMenu) {
+        let menuID = ObjectIdentifier(menu)
         MainActor.assumeIsolated {
-            rebuildModelMenu()
+            if menuID == ObjectIdentifier(modelMenu) {
+                rebuildModelMenu()
+            } else {
+                refreshCleanupItem()
+            }
         }
     }
 
@@ -248,6 +273,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(postProcessor.userRulesURL)
     }
 
+    // MARK: - AI cleanup
+
+    private func refreshCleanupItem() {
+        guard #available(macOS 26.0, *) else {
+            cleanupItem.title = "AI Cleanup — requires macOS 26"
+            cleanupItem.isEnabled = false
+            return
+        }
+        switch TranscriptCleaner.availability() {
+        case .available:
+            cleanupItem.title = "AI Cleanup"
+            cleanupItem.isEnabled = true
+            cleanupItem.state = cleanupEnabled ? .on : .off
+        case .appleIntelligenceNotEnabled:
+            cleanupItem.title = "AI Cleanup — Enable Apple Intelligence…"
+            cleanupItem.isEnabled = true
+            cleanupItem.state = .off
+        case .modelNotReady:
+            cleanupItem.title = "AI Cleanup — Apple Intelligence model downloading…"
+            cleanupItem.isEnabled = false
+            cleanupItem.state = .off
+        case .notSupported:
+            cleanupItem.title = "AI Cleanup — not supported on this Mac"
+            cleanupItem.isEnabled = false
+            cleanupItem.state = .off
+        }
+    }
+
+    @objc private func cleanupAction() {
+        guard #available(macOS 26.0, *) else { return }
+        switch TranscriptCleaner.availability() {
+        case .available:
+            cleanupEnabled.toggle()
+            refreshCleanupItem()
+            if cleanupEnabled {
+                toast.show("AI Cleanup on — transcripts get a grammar pass (~1s)")
+                if let cleaner {
+                    Task.detached { cleaner.prewarm() }
+                }
+            } else {
+                toast.show("AI Cleanup off")
+            }
+        case .appleIntelligenceNotEnabled:
+            showAppleIntelligenceInstructions()
+        default:
+            break
+        }
+    }
+
+    private func showAppleIntelligenceInstructions() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "AI Cleanup needs Apple Intelligence"
+        alert.informativeText = """
+        Susurro's AI Cleanup runs entirely on your Mac using Apple Intelligence, \
+        which is currently turned off.
+
+        To enable it:
+        1. Open System Settings → Apple Intelligence & Siri
+        2. Turn on Apple Intelligence
+        3. Wait for the model download to complete (a few minutes)
+
+        Then click "AI Cleanup" in Susurro's menu again.
+        """
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Not Now")
+        if alert.runModal() == .alertFirstButtonReturn {
+            let pane = URL(string: "x-apple.systempreferences:com.apple.Siri-Settings.extension")
+            if let pane, NSWorkspace.shared.urlForApplication(toOpen: pane) != nil {
+                NSWorkspace.shared.open(pane)
+            } else if let settings = URL(string: "x-apple.systempreferences:") {
+                NSWorkspace.shared.open(settings)
+            }
+        }
+    }
+
     @objc private func openMicSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
             NSWorkspace.shared.open(url)
@@ -328,9 +429,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         slog("ptt: stopped (\(samples.count) samples), transcribing")
         guard let engine else { return }
         let postProcessor = postProcessor
+        let cleaner = cleanupEnabled ? self.cleaner : nil
         Task.detached(priority: .userInitiated) {
             let raw = (try? engine.transcribe(samples: samples)) ?? ""
-            let text = postProcessor.process(raw)
+            var text = postProcessor.process(raw)
+            if let cleaner, !text.isEmpty {
+                text = await cleaner.clean(text) ?? text
+            }
             slog("ptt: transcript: \(raw) -> \(text)")
             await MainActor.run {
                 guard !text.isEmpty else { return }
