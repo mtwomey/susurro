@@ -71,6 +71,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         modelMenu.delegate = self // refresh state every time the submenu opens
         menu.addItem(modelItem)
         rebuildModelMenu()
+
+        let keyItem = NSMenuItem(title: "Push-to-Talk Key", action: nil, keyEquivalent: "")
+        let keyMenu = NSMenu(title: "Push-to-Talk Key")
+        for choice in PTTKey.all {
+            let item = NSMenuItem(title: choice.title, action: #selector(pttKeyAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = choice.id
+            item.state = choice == hotkey.key ? .on : .off
+            keyMenu.addItem(item)
+        }
+        keyItem.submenu = keyMenu
+        menu.addItem(keyItem)
         models.onProgress = { [weak self] _, _ in self?.rebuildModelMenu() }
 
         menu.addItem(.separator())
@@ -219,6 +231,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(postProcessor.userRulesURL)
     }
 
+    @objc private func pttKeyAction(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let choice = PTTKey.all.first(where: { $0.id == id }) else { return }
+        hotkey.key = choice
+        choice.save()
+        sender.menu?.items.forEach { $0.state = ($0 == sender) ? .on : .off }
+        hotkeyItem.title = "Hotkey: hold \(choice.title) to dictate"
+        toast.show("Push-to-talk key is now \(choice.title)")
+    }
+
     // MARK: - Hotkey (push-to-talk)
 
     private func setUpHotkey() {
@@ -245,7 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func hotkeyGranted() {
         slog("event tap active")
-        hotkeyItem.title = "Hotkey: hold Right Option to dictate"
+        hotkeyItem.title = "Hotkey: hold \(hotkey.key.title) to dictate"
     }
 
     private func pttPressed() {
