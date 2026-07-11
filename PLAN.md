@@ -135,4 +135,4 @@ Debug hook from this investigation: `kill -USR1 <pid>` toggles recording.
 
 ## v2 parking lot
 
-Text preview in overlay (streaming via SpeechTranscriber or chunked whisper) · history (menu bar list → searchable window) · custom vocabulary / fix-up dictionary ("launch DP list" → "launchd plist") · per-app formatting rules · toggle-mode dictation · signing + notarization when sharing becomes real.
+Text preview in overlay (streaming via SpeechTranscriber or chunked whisper) · history (menu bar list → searchable window) · per-app formatting rules · toggle-mode dictation · custom PTT key via validated capture flow (accept modifiers/F-keys, reject typing keys with explanation — replaces the removed F13–F15 menu entries; HotkeyMonitor already supports regular keys) · signing + notarization when sharing becomes real. (Custom vocabulary shipped early as rules.json substitutions.)
