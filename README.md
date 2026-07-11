@@ -21,6 +21,8 @@ leaves your machine.
 
 ## Installing (prebuilt zip)
 
+Download the latest zip from [Releases](https://github.com/mtwomey/susurro/releases).
+
 1. Unzip and drag **Susurro.app** to `/Applications`
 2. Launch it. macOS will refuse ("Apple could not verify…") because this build
    isn't notarized: open **System Settings → Privacy & Security**, scroll down,
