@@ -14,7 +14,28 @@ public final class AudioRecorder: @unchecked Sendable {
     /// Called with the peak level (0...1) of each captured buffer — feeds the overlay waveform later.
     public var levelHandler: (@Sendable (Float) -> Void)?
 
-    public init() {}
+    /// Fired if the audio graph changes while recording (mic unplugged, default
+    /// input device switched). The recording is no longer trustworthy.
+    public var onInterruption: (@Sendable () -> Void)?
+
+    private var configObserver: NSObjectProtocol?
+
+    public init() {
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self, self.isRecording else { return }
+            self.onInterruption?()
+        }
+    }
+
+    deinit {
+        if let configObserver {
+            NotificationCenter.default.removeObserver(configObserver)
+        }
+    }
 
     public func start() throws {
         guard !isRecording else { return }
