@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import ServiceManagement
 import SusurroCore
 import UserNotifications
 
@@ -83,6 +84,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         keyItem.submenu = keyMenu
         menu.addItem(keyItem)
+
+        let loginItem = NSMenuItem(
+            title: "Start at Login",
+            action: #selector(toggleLoginItem(_:)),
+            keyEquivalent: ""
+        )
+        loginItem.target = self
+        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(loginItem)
         models.onProgress = { [weak self] _, _ in self?.rebuildModelMenu() }
 
         menu.addItem(.separator())
@@ -100,6 +110,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // so the permission dialog can't interrupt an in-flight engine start.
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             slog("mic permission granted=\(granted)")
+            if !granted {
+                Task { @MainActor [weak self] in
+                    self?.recordItem.title = "Mic access denied — click to open Settings"
+                    self?.recordItem.action = #selector(AppDelegate.openMicSettings)
+                    self?.recordItem.isEnabled = true
+                }
+            }
         }
 
         // Feed recorder levels to the overlay waveform (audio thread → main hop)
@@ -229,6 +246,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openRules() {
         NSWorkspace.shared.open(postProcessor.userRulesURL)
+    }
+
+    @objc private func openMicSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func toggleLoginItem(_ sender: NSMenuItem) {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+                sender.state = .off
+                toast.show("Susurro will no longer start at login")
+            } else {
+                try SMAppService.mainApp.register()
+                sender.state = .on
+                toast.show("Susurro will start at login")
+            }
+        } catch {
+            slog("login item toggle failed: \(error)")
+            toast.show("Couldn't change login item: \(error.localizedDescription)")
+        }
     }
 
     @objc private func pttKeyAction(_ sender: NSMenuItem) {
