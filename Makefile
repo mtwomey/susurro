@@ -12,6 +12,8 @@ APP         = $(BUILD_DIR)/$(APP_NAME).app
 BINARY      = .build/release/$(APP_NAME)
 WHISPER_DIR = build-whisper
 DEPLOY_TGT  = 15.0
+# Stable self-signed identity — keeps TCC (Accessibility/mic) grants across rebuilds
+SIGN_ID     = Susurro Dev
 
 .PHONY: whisper app run test clean
 
@@ -33,7 +35,7 @@ app:
 	@mkdir -p $(APP)/Contents/MacOS
 	@cp $(BINARY) $(APP)/Contents/MacOS/$(APP_NAME)
 	@cp Support/Info.plist $(APP)/Contents/Info.plist
-	@codesign --force --sign - $(APP)
+	@codesign --force --sign "$(SIGN_ID)" $(APP)
 	@echo "✓ $(APP)"
 
 run: app
