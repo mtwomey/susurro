@@ -10,13 +10,14 @@ struct PTTKey: Sendable, Equatable {
     let keyCode: Int64
     let modifierFlag: CGEventFlags? // nil = regular key
 
+    // Curated known-good hold keys. Regular keys (F13 etc.) are supported by the
+    // monitor (modifierFlag: nil → keyDown/keyUp + swallow) but not offered in the
+    // menu — a validated "Custom key…" capture flow is parked in PLAN.md v2 for
+    // programmable-keyboard users.
     static let all: [PTTKey] = [
-        PTTKey(id: "rightOption",  title: "Right Option (⌥)",  keyCode: 61,  modifierFlag: .maskAlternate),
-        PTTKey(id: "rightCommand", title: "Right Command (⌘)", keyCode: 54,  modifierFlag: .maskCommand),
-        PTTKey(id: "rightControl", title: "Right Control (⌃)", keyCode: 62,  modifierFlag: .maskControl),
-        PTTKey(id: "f13",          title: "F13",               keyCode: 105, modifierFlag: nil),
-        PTTKey(id: "f14",          title: "F14",               keyCode: 107, modifierFlag: nil),
-        PTTKey(id: "f15",          title: "F15",               keyCode: 113, modifierFlag: nil),
+        PTTKey(id: "rightOption",  title: "Right Option (⌥)",  keyCode: 61, modifierFlag: .maskAlternate),
+        PTTKey(id: "rightCommand", title: "Right Command (⌘)", keyCode: 54, modifierFlag: .maskCommand),
+        PTTKey(id: "rightControl", title: "Right Control (⌃)", keyCode: 62, modifierFlag: .maskControl),
     ]
 
     static let `default` = all[0] // Right Option
