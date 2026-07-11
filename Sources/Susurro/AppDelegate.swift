@@ -12,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var recordItem: NSMenuItem!
     private var hotkeyItem: NSMenuItem!
 
+    // Note: HALAudioRecorder (raw CoreAudio) was tested as an alternative backend —
+    // the mic-mode pill appears on both paths, so we keep the cleaner AVAudioEngine.
     private let recorder = AudioRecorder()
     private let hotkey = HotkeyMonitor()
     private var engine: WhisperEngine?
