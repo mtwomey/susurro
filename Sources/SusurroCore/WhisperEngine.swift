@@ -15,12 +15,13 @@ public enum WhisperError: Error, CustomStringConvertible {
 
 /// In-process whisper.cpp engine. Loads the model once and stays warm.
 /// Expects 16 kHz mono Float32 samples.
-/// @unchecked Sendable: whisper_context is not reentrant — callers must serialize
-/// transcribe() calls (the app runs one transcription at a time by construction).
+/// @unchecked Sendable: whisper_context is not reentrant, so transcribe() is
+/// internally serialized — two quick dictations can't corrupt the context.
 public final class WhisperEngine: @unchecked Sendable {
     public static let sampleRate = 16_000
 
     private let ctx: OpaquePointer
+    private let transcribeLock = NSLock()
 
     public init(modelPath: String) throws {
         var params = whisper_context_default_params()
@@ -36,6 +37,9 @@ public final class WhisperEngine: @unchecked Sendable {
     }
 
     public func transcribe(samples: [Float]) throws -> String {
+        transcribeLock.lock()
+        defer { transcribeLock.unlock() }
+
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         params.print_progress   = false
         params.print_realtime   = false

@@ -146,6 +146,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
+        // Mic unplugged / input device switched mid-recording: discard cleanly
+        recorder.onInterruption = {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.recorder.isRecording else { return }
+                _ = self.recorder.stop()
+                self.overlay.hide()
+                self.toast.show("Recording interrupted — microphone changed")
+                slog("recording interrupted by audio configuration change")
+            }
+        }
+
         loadEngine()
 
         // Debug/testing hook: `kill -USR1 <pid>` toggles recording,
@@ -431,8 +442,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let postProcessor = postProcessor
         let cleaner = cleanupEnabled ? self.cleaner : nil
         Task.detached(priority: .userInitiated) {
-            let raw = (try? engine.transcribe(samples: samples)) ?? ""
-            var text = postProcessor.process(raw)
+            let raw = TranscriptFilter.stripHallucinations(
+                (try? engine.transcribe(samples: samples)) ?? ""
+            )
+            var text = raw.isEmpty ? "" : postProcessor.process(raw)
             if let cleaner, !text.isEmpty {
                 text = await cleaner.clean(text) ?? text
             }
