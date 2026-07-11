@@ -15,7 +15,9 @@ public enum WhisperError: Error, CustomStringConvertible {
 
 /// In-process whisper.cpp engine. Loads the model once and stays warm.
 /// Expects 16 kHz mono Float32 samples.
-public final class WhisperEngine {
+/// @unchecked Sendable: whisper_context is not reentrant — callers must serialize
+/// transcribe() calls (the app runs one transcription at a time by construction).
+public final class WhisperEngine: @unchecked Sendable {
     public static let sampleRate = 16_000
 
     private let ctx: OpaquePointer
