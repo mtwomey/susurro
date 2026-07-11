@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // SCKAudioRecorder (ScreenCaptureKit — no mic pill, but screen-recording pill,
     // Screen Recording permission, and 75–160 ms capture-start dead air).
     private let recorder = AudioRecorder()
+    private let overlay = OverlayController()
     private let hotkey = HotkeyMonitor()
     private var engine: WhisperEngine?
     private var axPollTimer: Timer?
@@ -69,6 +70,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // so the permission dialog can't interrupt an in-flight engine start.
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             slog("mic permission granted=\(granted)")
+        }
+
+        // Feed recorder levels to the overlay waveform (audio thread → main hop)
+        recorder.levelHandler = { level in
+            DispatchQueue.main.async { [weak self] in
+                self?.overlay.push(level: level)
+            }
         }
 
         loadEngine()
@@ -140,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try recorder.start()
             slog("ptt: recording")
-            setIcon(recording: true)
+            overlay.show()
         } catch {
             slog("ptt: recorder.start failed: \(error)")
         }
@@ -149,7 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func pttReleased() {
         guard recorder.isRecording else { return }
         let samples = recorder.stop()
-        setIcon(recording: false)
+        overlay.hide()
         slog("ptt: stopped (\(samples.count) samples), transcribing")
         guard let engine else { return }
         Task.detached(priority: .userInitiated) {
@@ -166,23 +174,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func setIcon(recording: Bool) {
-        guard let button = statusItem.button else { return }
-        if recording {
-            // Red filled symbol — unmistakable while the mic is hot
-            let config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
-            button.image = NSImage(
-                systemSymbolName: "record.circle.fill",
-                accessibilityDescription: "Susurro — recording"
-            )?.withSymbolConfiguration(config)
-            button.image?.isTemplate = false
-        } else {
-            button.image = NSImage(
-                systemSymbolName: "waveform.circle",
-                accessibilityDescription: "Susurro"
-            )
-        }
-    }
+    // Menu bar icon stays static: the overlay waveform (and the system mic pill)
+    // are the recording indicators — a third one was visual noise.
 
     // MARK: - Test recording via menu (kept until M1.6)
 
