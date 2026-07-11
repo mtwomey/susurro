@@ -100,6 +100,20 @@ Key deltas vs Python version, beyond consolidation:
 - **Foundation Models availability** — requires Apple Intelligence enabled; cleanup feature must degrade gracefully when unavailable.
 - **Model download UX** — small.en is ~466 MB; needs progress UI and checksum verification.
 
+## Open investigation: mic-mode pill
+
+macOS Tahoe shows a large mic pill in the menu bar whenever Susurro records. Ruled out
+by experiment (2026-07-11): code signature (ad-hoc vs identity), trigger path (menu vs
+hotkey), presence of CGEventTap, capture API (AVAudioEngine vs raw HAL IOProc — see
+HALAudioRecorder.swift), launch context (shell child vs LaunchServices), and activation
+policy (accessory vs regular). Counter-example: AudioRecorder.app (MAS) records mic,
+even backgrounded, with no pill. Remaining suspects: App Sandbox +
+com.apple.security.device.audio-input entitlement; CoreAudio tap/aggregate-device
+capture. Note: sandboxed apps cannot create active event taps, so a sandboxed Susurro
+can only be tested via menu-triggered recording. Also worth ControlCenter log forensics
+(`log stream --predicate 'process == "ControlCenter"'` during recording). The small
+orange privacy dot appears in all cases and is not in scope — only the pill.
+
 ## v2 parking lot
 
 Text preview in overlay (streaming via SpeechTranscriber or chunked whisper) · history (menu bar list → searchable window) · custom vocabulary / fix-up dictionary ("launch DP list" → "launchd plist") · per-app formatting rules · toggle-mode dictation · signing + notarization when sharing becomes real.

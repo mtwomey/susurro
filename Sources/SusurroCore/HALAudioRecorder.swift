@@ -67,7 +67,7 @@ public final class HALAudioRecorder: @unchecked Sendable {
         // IO proc — receives device-native Float32 buffers
         let context = Unmanaged.passUnretained(self).toOpaque()
         status = AudioDeviceCreateIOProcID(deviceID, { _, _, inInputData, _, _, _, clientData in
-            guard let clientData, let inInputData else { return noErr }
+            guard let clientData else { return noErr }
             let recorder = Unmanaged<HALAudioRecorder>.fromOpaque(clientData).takeUnretainedValue()
             recorder.consume(bufferList: inInputData)
             return noErr
