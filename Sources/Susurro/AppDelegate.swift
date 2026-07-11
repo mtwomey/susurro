@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Temporary until ModelManager (M4)
     private let modelPath = NSString(string: "~/Git_Repos/whisper.cpp/models/ggml-small.en.bin").expandingTildeInPath
 
+    private var sigSource: DispatchSourceSignal?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
@@ -68,6 +70,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         loadEngine()
+
+        // Debug/testing hook: `kill -USR1 <pid>` toggles recording,
+        // enabling scripted experiments without a human at the hotkey.
+        signal(SIGUSR1, SIG_IGN)
+        let src = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
+        src.setEventHandler { [weak self] in
+            self?.toggleTestRecording()
+        }
+        src.resume()
+        sigSource = src
     }
 
     private func loadEngine() {
