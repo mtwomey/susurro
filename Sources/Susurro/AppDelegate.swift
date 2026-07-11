@@ -12,9 +12,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var recordItem: NSMenuItem!
     private var hotkeyItem: NSMenuItem!
 
-    // Experiment in progress: HAL capture backend — testing whether it avoids
-    // the macOS mic-mode menu bar pill. AudioRecorder (AVAudioEngine) is the fallback.
-    private let recorder = HALAudioRecorder()
+    // Production capture: AVAudioEngine. Alternatives evaluated and documented in
+    // PLAN.md ("mic-mode pill"): HALAudioRecorder (raw CoreAudio — still pills),
+    // SCKAudioRecorder (ScreenCaptureKit — no mic pill, but screen-recording pill,
+    // Screen Recording permission, and 75–160 ms capture-start dead air).
+    private let recorder = AudioRecorder()
     private let hotkey = HotkeyMonitor()
     private var engine: WhisperEngine?
     private var axPollTimer: Timer?

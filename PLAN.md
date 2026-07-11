@@ -115,10 +115,23 @@ Counter-example explained: AudioRecorder.app captures audio via **ScreenCaptureK
 (SCStream, mic capture added in macOS 15) — attribution is `aud`/`scr`, not `mic`, so
 the mic-modes module never engages. The orange privacy dot appears in all cases.
 
-Adopting SCK capture in Susurro is possible but trades the pill for the Screen
-Recording permission (and its own indicator semantics) — parked as a v2 experiment;
-decide after dogfooding whether the pill actually grates. Debug hook added along the
-way: `kill -USR1 <pid>` toggles recording for scripted experiments.
+**SCK alternative — built, measured, rejected (SCKAudioRecorder.swift kept in tree).**
+Implementation: SCStream with `captureMicrophone = true` (macOS 15+), minimal 2×2 @ 1fps
+display filter (mandatory), `.microphone` stream output → Float32 samples →
+AudioResampler.to16kMono. Swap is one line in AppDelegate (`recorder = SCKAudioRecorder()`).
+Findings on macOS 26.5:
+1. Mic pill: gone — attribution becomes `aud`/`scr`, mic-modes module never engages.
+2. BUT a blue screen-recording pill appears instead (AudioRecorder.app has it too —
+   user initially mistook it for part of that app's UI). No indicator-free path exists;
+   you only choose which badge you wear, and "recording your screen" is a worse label
+   than "using the mic" for a dictation tool.
+3. Requires Screen Recording TCC (scarier grant than mic).
+4. Capture-start dead air measured via SIGUSR1-scripted runs: 162 ms cold,
+   75–91 ms warm, vs ~10–20 ms for AVAudioEngine — real risk of clipping the first
+   syllable on every dictation. Fails the <50 ms criterion.
+Verdict: AVAudioEngine + mic pill is the correct production configuration. Revisit only
+if Apple changes indicator policy or adds a first-class low-latency audio-only tap.
+Debug hook from this investigation: `kill -USR1 <pid>` toggles recording.
 
 ## v2 parking lot
 
