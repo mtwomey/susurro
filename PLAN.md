@@ -102,17 +102,23 @@ Key deltas vs Python version, beyond consolidation:
 
 ## Open investigation: mic-mode pill
 
-macOS Tahoe shows a large mic pill in the menu bar whenever Susurro records. Ruled out
-by experiment (2026-07-11): code signature (ad-hoc vs identity), trigger path (menu vs
-hotkey), presence of CGEventTap, capture API (AVAudioEngine vs raw HAL IOProc — see
-HALAudioRecorder.swift), launch context (shell child vs LaunchServices), and activation
-policy (accessory vs regular). Counter-example: AudioRecorder.app (MAS) records mic,
-even backgrounded, with no pill. Remaining suspects: App Sandbox +
-com.apple.security.device.audio-input entitlement; CoreAudio tap/aggregate-device
-capture. Note: sandboxed apps cannot create active event taps, so a sandboxed Susurro
-can only be tested via menu-triggered recording. Also worth ControlCenter log forensics
-(`log stream --predicate 'process == "ControlCenter"'` during recording). The small
-orange privacy dot appears in all cases and is not in scope — only the pill.
+**SOLVED (2026-07-11), mechanism identified via ControlCenter log forensics.**
+The pill is Control Center's mic-modes module. It engages iff an app holds a true
+microphone *input session*: coreaudiod/audiomxd classify it (implicit_category=Record),
+ControlCenter receives a `mic:<bundle-id>` attribution, and
+`AVControlCenterMicrophoneModuleShouldBeShownForBundleID` returns true → pill.
+Ruled out by experiment: signature (ad-hoc vs identity), trigger path, CGEventTap
+presence, capture API (AVAudioEngine vs raw HAL IOProc — HALAudioRecorder.swift kept),
+launch context, activation policy (accessory vs regular), hardened runtime +
+audio-input entitlement. All pill, because all still open a real mic input.
+Counter-example explained: AudioRecorder.app captures audio via **ScreenCaptureKit**
+(SCStream, mic capture added in macOS 15) — attribution is `aud`/`scr`, not `mic`, so
+the mic-modes module never engages. The orange privacy dot appears in all cases.
+
+Adopting SCK capture in Susurro is possible but trades the pill for the Screen
+Recording permission (and its own indicator semantics) — parked as a v2 experiment;
+decide after dogfooding whether the pill actually grates. Debug hook added along the
+way: `kill -USR1 <pid>` toggles recording for scripted experiments.
 
 ## v2 parking lot
 

@@ -35,7 +35,7 @@ app:
 	@mkdir -p $(APP)/Contents/MacOS
 	@cp $(BINARY) $(APP)/Contents/MacOS/$(APP_NAME)
 	@cp Support/Info.plist $(APP)/Contents/Info.plist
-	@codesign --force --sign "$(SIGN_ID)" $(APP)
+	@codesign --force --options runtime --entitlements Support/Susurro.entitlements --sign "$(SIGN_ID)" $(APP)
 	@echo "✓ $(APP)"
 
 run: app
