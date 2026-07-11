@@ -34,6 +34,8 @@ app:
 	swift build -c release
 	@mkdir -p $(APP)/Contents/MacOS
 	@cp $(BINARY) $(APP)/Contents/MacOS/$(APP_NAME)
+	@mkdir -p $(APP)/Contents/Resources
+	@cp -R .build/release/Susurro_SusurroCore.bundle $(APP)/Contents/Resources/
 	@cp Support/Info.plist $(APP)/Contents/Info.plist
 	@codesign --force --options runtime --entitlements Support/Susurro.entitlements --sign "$(SIGN_ID)" $(APP)
 	@echo "✓ $(APP)"

@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Screen Recording permission, and 75–160 ms capture-start dead air).
     private let recorder = AudioRecorder()
     private let overlay = OverlayController()
+    private let postProcessor = PostProcessor()
     private let hotkey = HotkeyMonitor()
     private var engine: WhisperEngine?
     private var axPollTimer: Timer?
@@ -54,6 +55,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyItem = NSMenuItem(title: "Hotkey: checking permission…", action: nil, keyEquivalent: "")
         hotkeyItem.isEnabled = false
         menu.addItem(hotkeyItem)
+
+        let rulesItem = NSMenuItem(
+            title: "Edit Rules…",
+            action: #selector(openRules),
+            keyEquivalent: ""
+        )
+        rulesItem.target = self
+        menu.addItem(rulesItem)
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(
@@ -114,6 +123,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func openRules() {
+        NSWorkspace.shared.open(postProcessor.userRulesURL)
+    }
+
     // MARK: - Hotkey (push-to-talk)
 
     private func setUpHotkey() {
@@ -160,9 +173,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.hide()
         slog("ptt: stopped (\(samples.count) samples), transcribing")
         guard let engine else { return }
+        let postProcessor = postProcessor
         Task.detached(priority: .userInitiated) {
-            let text = (try? engine.transcribe(samples: samples)) ?? ""
-            slog("ptt: transcript: \(text)")
+            let raw = (try? engine.transcribe(samples: samples)) ?? ""
+            let text = postProcessor.process(raw)
+            slog("ptt: transcript: \(raw) -> \(text)")
             await MainActor.run {
                 guard !text.isEmpty else { return }
                 TextInjector.type(text)
