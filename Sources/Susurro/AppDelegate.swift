@@ -1,13 +1,14 @@
 import AppKit
 import AVFoundation
 import SusurroCore
+import UserNotifications
 
 func slog(_ msg: String) {
     NSLog("[susurro] %@", msg)
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var recordItem: NSMenuItem!
     private var hotkeyItem: NSMenuItem!
@@ -19,12 +20,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let recorder = AudioRecorder()
     private let overlay = OverlayController()
     private let postProcessor = PostProcessor()
+    private let models = ModelManager()
+    private let toast = ToastPanel()
+    private var modelMenu: NSMenu!
     private let hotkey = HotkeyMonitor()
     private var engine: WhisperEngine?
     private var axPollTimer: Timer?
-
-    // Temporary until ModelManager (M4)
-    private let modelPath = NSString(string: "~/Git_Repos/whisper.cpp/models/ggml-small.en.bin").expandingTildeInPath
 
     private var sigSource: DispatchSourceSignal?
 
@@ -64,6 +65,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rulesItem.target = self
         menu.addItem(rulesItem)
 
+        let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+        modelMenu = NSMenu(title: "Model")
+        modelItem.submenu = modelMenu
+        modelMenu.delegate = self // refresh state every time the submenu opens
+        menu.addItem(modelItem)
+        rebuildModelMenu()
+        models.onProgress = { [weak self] _, _ in self?.rebuildModelMenu() }
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(
             title: "Quit Susurro",
@@ -101,8 +110,91 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sigSource = src
     }
 
+    // MARK: - Models
+
+    nonisolated func menuNeedsUpdate(_ menu: NSMenu) {
+        MainActor.assumeIsolated {
+            rebuildModelMenu()
+        }
+    }
+
+    private func rebuildModelMenu() {
+        modelMenu.removeAllItems()
+        for model in ModelManager.catalog {
+            let item = NSMenuItem(title: "", action: #selector(modelMenuAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = model.id
+
+            if let progress = models.downloadProgress[model.id] {
+                item.title = "\(model.id) — downloading \(Int(progress * 100))%"
+                item.isEnabled = false
+            } else if models.isDownloaded(model) {
+                let active = model.id == models.activeModelID
+                item.title = "\(model.id) (\(model.approxMB) MB) — \(model.note)"
+                item.state = active ? .on : .off
+            } else {
+                item.title = "\(model.id) (\(model.approxMB) MB) — download"
+            }
+            modelMenu.addItem(item)
+        }
+        modelMenu.autoenablesItems = false
+    }
+
+    @objc private func modelMenuAction(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let model = ModelManager.catalog.first(where: { $0.id == id }) else { return }
+
+        if models.isDownloaded(model) {
+            guard models.activeModelID != model.id else { return }
+            models.activeModelID = model.id
+            rebuildModelMenu()
+            loadEngine() // hot-swap
+        } else {
+            // Clicking a model = "I want to use it": instant toast acknowledgment,
+            // download, then auto-switch + notification (attention may be elsewhere)
+            toast.show("⬇ Downloading \(model.id) — still on \(models.activeModelID) until it's ready")
+            Task { [weak self] in
+                do {
+                    try await self?.models.download(model)
+                    guard let self else { return }
+                    self.models.activeModelID = model.id
+                    self.rebuildModelMenu()
+                    self.loadEngine()
+                    self.notify("Model ready",
+                                "\(model.id) downloaded — Susurro is now using it.")
+                } catch {
+                    slog("model download failed: \(error)")
+                    self?.notify("Model download failed",
+                                 "\(model.id): \(error.localizedDescription)")
+                    self?.rebuildModelMenu()
+                }
+            }
+            rebuildModelMenu()
+        }
+    }
+
+    private func notify(_ title: String, _ body: String) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            center.add(UNNotificationRequest(
+                identifier: UUID().uuidString, content: content, trigger: nil
+            ))
+        }
+    }
+
     private func loadEngine() {
-        let path = modelPath
+        guard let path = models.activeModelPath() else {
+            recordItem.title = "No model — download one from the Model menu"
+            recordItem.isEnabled = false
+            return
+        }
+        engine = nil
+        recordItem.title = "Loading model…"
+        recordItem.isEnabled = false
         slog("loading model: \(path)")
         Task.detached(priority: .userInitiated) {
             do {
