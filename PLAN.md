@@ -75,7 +75,14 @@ Key deltas vs Python version, beyond consolidation:
 
 **M4 — Settings & models.** Hotkey recorder UI; model manager: download any of tiny.en / base.en / small.en / medium.en / large-v3-turbo with progress + checksum, switch the active model from settings (hot-swap, no restart), delete unused models; launch-at-login; mic/accessibility onboarding flow. Exit test: fresh Mac (or fresh user account) reaches working dictation without touching a terminal, and switching models takes effect on the next dictation.
 
-**M5 — LLM cleanup (opt-in).** Foundation Models pass behind a settings toggle. Exit test: toggle on → cleaner prose, ≤1s added on 2-sentence dictation; toggle off → identical to M3 behavior.
+**M5 — LLM cleanup (opt-in). SHIPPED, default off.** Foundation Models pass behind a
+menu toggle, with guided generation (@Generable schema — structurally prevents preamble
+leakage observed in testing), greedy sampling, <6-word skip, sanity-check fallback to
+raw text, and a guided enable-Apple-Intelligence flow (alert + Settings deep link) when
+unavailable. Verdict after live testing: correction quality is good but re-emission
+latency on longer dictations is noticeable; kept as an opt-in mode. Future speed-up
+path: streaming typing (type tokens as generated, ~0.3s to first word) with a held
+initial buffer to preserve most sanity checking.
 
 **M6 — Hardening.** Error states (no mic, model missing, permission revoked), sleep/wake and display-change resilience, memory profile with model resident. Then: run side-by-side with Python ptt for a week → retire it.
 
