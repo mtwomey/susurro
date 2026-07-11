@@ -6,6 +6,8 @@
 	<string>Susurro</string>
 	<key>CFBundleExecutable</key>
 	<string>Susurro</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.mtwomey.susurro</string>
 	<key>CFBundleName</key>

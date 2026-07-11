@@ -36,6 +36,7 @@ app:
 	@cp $(BINARY) $(APP)/Contents/MacOS/$(APP_NAME)
 	@mkdir -p $(APP)/Contents/Resources
 	@cp -R .build/release/Susurro_SusurroCore.bundle $(APP)/Contents/Resources/
+	@cp Support/AppIcon.icns $(APP)/Contents/Resources/
 	@cp Support/Info.plist $(APP)/Contents/Info.plist
 	@codesign --force --options runtime --entitlements Support/Susurro.entitlements --sign "$(SIGN_ID)" $(APP)
 	@echo "✓ $(APP)"
@@ -47,6 +48,12 @@ run: app
 
 test:
 	swift test
+
+# Distributable zip (self-signed — recipients need the Gatekeeper "Open Anyway"
+# step documented in the README; Developer ID + notarization removes that)
+dist: app
+	@cd $(BUILD_DIR) && ditto -c -k --keepParent $(APP_NAME).app Susurro-$$(defaults read $$(pwd)/$(APP_NAME).app/Contents/Info CFBundleShortVersionString).zip
+	@ls -lh $(BUILD_DIR)/*.zip
 
 clean:
 	rm -rf .build $(BUILD_DIR)
