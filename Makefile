@@ -49,6 +49,15 @@ run: app
 test:
 	swift test
 
+# Install to /Applications and relaunch from there
+install: app
+	@pkill -x $(APP_NAME) 2>/dev/null || true
+	@sleep 0.3
+	@ditto $(APP) /Applications/$(APP_NAME).app
+	@open /Applications/$(APP_NAME).app
+	@echo "✓ installed to /Applications/$(APP_NAME).app"
+	@echo "  If 'Start at Login' was enabled, toggle it off/on once so it points here."
+
 # Distributable zip (self-signed — recipients need the Gatekeeper "Open Anyway"
 # step documented in the README; Developer ID + notarization removes that)
 dist: app
