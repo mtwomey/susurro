@@ -37,7 +37,6 @@ let package = Package(
             name: "SusurroCore",
             dependencies: ["CWhisper"],
             path: "Sources/SusurroCore",
-            resources: [.copy("Resources/rules.json")],
             cSettings: [
                 .unsafeFlags([
                     "-Ivendor/whisper.cpp/include",

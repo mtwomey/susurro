@@ -54,30 +54,26 @@ public final class PostProcessor: @unchecked Sendable {
         ensureUserRulesFile()
     }
 
-    /// Copy the bundled default rules to the user location on first run.
+    /// Write the embedded default rules to the user location on first run.
     private func ensureUserRulesFile() {
         let fm = FileManager.default
-        guard !fm.fileExists(atPath: userRulesURL.path),
-              let bundled = Bundle.module.url(forResource: "rules", withExtension: "json")
-        else { return }
+        guard !fm.fileExists(atPath: userRulesURL.path) else { return }
         try? fm.createDirectory(
             at: userRulesURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try? fm.copyItem(at: bundled, to: userRulesURL)
+        try? DefaultRules.data.write(to: userRulesURL)
     }
 
     public func loadRules() -> PostProcessingRules? {
         let decoder = JSONDecoder()
-        // User file first; fall back to bundled default (e.g. user file is invalid JSON)
+        // User file first; fall back to embedded default (e.g. user file is invalid JSON)
         if let data = try? Data(contentsOf: userRulesURL),
            let rules = try? decoder.decode(PostProcessingRules.self, from: data) {
             return rules
         }
-        if let bundled = Bundle.module.url(forResource: "rules", withExtension: "json"),
-           let data = try? Data(contentsOf: bundled),
-           let rules = try? decoder.decode(PostProcessingRules.self, from: data) {
-            NSLog("[susurro] rules.json unreadable at %@ — using bundled defaults",
+        if let rules = DefaultRules.decoded() {
+            NSLog("[susurro] rules.json unreadable at %@ — using embedded defaults",
                   userRulesURL.path)
             return rules
         }
