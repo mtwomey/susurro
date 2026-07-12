@@ -31,8 +31,10 @@ Download the latest zip from [Releases](https://github.com/mtwomey/susurro/relea
    - **Microphone** (recording)
    - **Accessibility** (the hold-key listener and typing) — System Settings →
      Privacy & Security → Accessibility → enable Susurro, then quit & relaunch
-4. Click the waveform menu bar icon → **Model** → pick **small.en** and it
-   downloads (~466 MB, one time)
+4. On first run Susurro automatically downloads the default **small.en** model
+   (~466 MB, one time) — a banner appears when the download starts and a
+   notification when dictation is ready. Other sizes are available under the
+   **Model** menu.
 5. Hold **Right Option**, speak, release. Done.
 
 Optional: menu → **Start at Login**.
