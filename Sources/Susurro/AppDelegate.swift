@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Carbon.HIToolbox
 import ServiceManagement
 import SusurroCore
 import UserNotifications
@@ -31,6 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var cleanupEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "llmCleanupEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "llmCleanupEnabled") }
+    }
+
+    private var copyToClipboard: Bool {
+        get { UserDefaults.standard.bool(forKey: "copyToClipboard") } // default off
+        set { UserDefaults.standard.set(newValue, forKey: "copyToClipboard") }
     }
     private let hotkey = HotkeyMonitor()
     private var engine: WhisperEngine?
@@ -104,6 +110,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 Task.detached { cleaner.prewarm() }
             }
         }
+
+        let clipboardItem = NSMenuItem(
+            title: "Copy Transcript to Clipboard",
+            action: #selector(toggleClipboard(_:)),
+            keyEquivalent: ""
+        )
+        clipboardItem.target = self
+        clipboardItem.state = copyToClipboard ? .on : .off
+        menu.addItem(clipboardItem)
 
         let loginItem = NSMenuItem(
             title: "Start at Login",
@@ -415,6 +430,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func toggleClipboard(_ sender: NSMenuItem) {
+        copyToClipboard.toggle()
+        sender.state = copyToClipboard ? .on : .off
+        toast.show(copyToClipboard
+            ? "Transcripts will also be copied to the clipboard"
+            : "Clipboard untouched (except in password fields, where typing is blocked)")
+    }
+
     @objc private func toggleLoginItem(_ sender: NSMenuItem) {
         do {
             if SMAppService.mainApp.status == .enabled {
@@ -499,13 +522,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 text = await cleaner.clean(text) ?? text
             }
             slog("ptt: transcript: \(raw) -> \(text)")
-            await MainActor.run {
-                guard !text.isEmpty else { return }
+            await MainActor.run { [weak self] in
+                guard let self, !text.isEmpty else { return }
+                // Secure input (password fields) silently blocks synthetic typing —
+                // in that case copy regardless of the setting so the words aren't lost.
+                let secureInputActive = IsSecureEventInputEnabled()
                 TextInjector.type(text)
-                // Clipboard as a bonus safety net until history exists (v2)
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(text, forType: .string)
+                if self.copyToClipboard || secureInputActive {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(text, forType: .string)
+                    if secureInputActive && !self.copyToClipboard {
+                        self.toast.show("Typing blocked by a secure field — transcript copied to clipboard")
+                    }
+                }
             }
         }
     }
