@@ -65,5 +65,12 @@ Access, or edit `SIGN_ID` in the Makefile.
   privacy indicators — every legitimate app that records shows them
 - Password fields block synthetic typing (macOS secure input); your transcript
   is on the clipboard as a fallback
-- See `PLAN.md` for architecture and design history, `CHECKLIST.md` for the
-  release acceptance checklist
+
+## For developers
+
+- `ARCHITECTURE.md` — as-built structure, code map, dataflow, hard-won constraints
+- `DEVELOPMENT.md` — machine setup (incl. signing identity), make targets,
+  testing, debugging, release process
+- `PLAN.md` — historical design doc: decisions, spike data, investigations,
+  rejected alternatives, v2 parking lot
+- `CHECKLIST.md` — manual release acceptance checklist
