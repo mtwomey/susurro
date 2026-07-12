@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let postProcessor = PostProcessor()
     private let models = ModelManager()
     private let toast = ToastPanel()
+    private let helpWindow = HelpWindowController()
     private var modelMenu: NSMenu!
     private var cleanupItem: NSMenuItem!
 
@@ -115,6 +116,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         models.onProgress = { [weak self] _, _ in self?.rebuildModelMenu() }
 
         menu.addItem(.separator())
+
+        let helpItem = NSMenuItem(title: "Help…", action: #selector(showHelp), keyEquivalent: "")
+        helpItem.target = self
+        menu.addItem(helpItem)
+
         menu.addItem(NSMenuItem(
             title: "Quit Susurro",
             action: #selector(NSApplication.terminate(_:)),
@@ -321,6 +327,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openRules() {
         NSWorkspace.shared.open(postProcessor.userRulesURL)
+    }
+
+    @objc private func showHelp() {
+        helpWindow.show()
     }
 
     // MARK: - AI cleanup
