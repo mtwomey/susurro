@@ -149,4 +149,6 @@ Debug hook from this investigation: `kill -USR1 <pid>` toggles recording.
 
 ## v2 parking lot
 
+> **Live tracker: [GitHub Issues](https://github.com/mtwomey/susurro/issues).** Each item below is now an open `enhancement` issue with the full design thinking; this list is kept as the historical origin. When resuming, `gh issue list` is the source of truth. Mapping: text preview → #1, history → #2, streaming AI cleanup → #3, per-app formatting rules → #4, toggle-mode dictation → #5, custom PTT key → #6, signing + notarization → #7. Custom vocabulary already shipped (rules.json substitutions).
+
 Text preview in overlay (streaming via SpeechTranscriber or chunked whisper) · history (menu bar list → searchable window) · per-app formatting rules · toggle-mode dictation · custom PTT key via validated capture flow (accept modifiers/F-keys, reject typing keys with explanation — replaces the removed F13–F15 menu entries; HotkeyMonitor already supports regular keys) · signing + notarization when sharing becomes real. (Custom vocabulary shipped early as rules.json substitutions.)
