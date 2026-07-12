@@ -38,9 +38,7 @@ final class HelpWindowController {
         body("""
         Hold your push-to-talk key (default: Right Option), speak, release. \
         Your words are typed into whatever app has focus. While recording, a \
-        small waveform pill appears in the bottom-right corner. The transcript \
-        is also placed on the clipboard — useful if a password field or other \
-        secure input blocked the typing.
+        small waveform pill appears in the bottom-right corner.
         """)
 
         heading("Start Test Recording")
@@ -82,6 +80,15 @@ final class HelpWindowController {
         roughly a second on longer dictations; very short dictations skip it. \
         Requires macOS 26 with Apple Intelligence enabled — if it's off, this \
         menu item walks you through enabling it.
+        """)
+
+        heading("Copy Transcript to Clipboard")
+        body("""
+        When checked, every transcript is also copied to the clipboard. Off \
+        by default so dictating never overwrites something you were about to \
+        paste. Exception: if a password field or other secure input blocks \
+        the typing, the transcript is copied regardless, so your words aren't \
+        lost.
         """)
 
         heading("Start at Login")

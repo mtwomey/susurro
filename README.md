@@ -65,8 +65,10 @@ Access, or edit `SIGN_ID` in the Makefile.
 
 - The orange dot and mic pill in the menu bar while recording are macOS
   privacy indicators — every legitimate app that records shows them
-- Password fields block synthetic typing (macOS secure input); your transcript
-  is on the clipboard as a fallback
+- Password fields block synthetic typing (macOS secure input); Susurro detects
+  this and copies the transcript to the clipboard so it isn't lost. Copying to
+  the clipboard on every dictation is available as a menu toggle (off by
+  default — your clipboard is yours)
 
 ## For developers
 
