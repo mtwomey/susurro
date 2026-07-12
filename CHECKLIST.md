@@ -9,7 +9,10 @@ automated: real apps, real permissions, real hardware events.
 - [ ] Dictate into: Slack, a terminal, a browser text field, Notes
 - [ ] Dictate into a full-screen app — overlay appears above it, focus unmoved
 - [ ] Dictate into a password field — expect no typed text (secure input blocks
-      synthetic keystrokes); transcript is still on the clipboard
+      synthetic keystrokes); transcript lands on the clipboard with a toast,
+      even with the clipboard toggle off
+- [ ] Clipboard toggle off (default): dictating leaves existing clipboard
+      contents untouched; toggle on: transcript is copied
 - [ ] Rapid dictations back-to-back — no overlap, no dropped transcripts
 - [ ] Hold key, say nothing, release — nothing typed (hallucination filter)
 - [ ] Very long dictation (60s+) — transcript complete, memory returns to baseline
@@ -34,6 +37,7 @@ automated: real apps, real permissions, real hardware events.
 - [ ] Edit rules.json (add a substitution), dictate — applies without restart
 - [ ] AI Cleanup on: long dictation cleaned; short dictation instant; off: raw
 - [ ] Start at Login on → reboot → Susurro present and working
+- [ ] Help… window opens, and its content matches the current menu items
 
 ## Fresh-machine install (before sharing)
 
