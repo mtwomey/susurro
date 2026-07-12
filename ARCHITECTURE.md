@@ -2,7 +2,7 @@
 
 Companion to `PLAN.md` (the historical design document — read it for *why*
 decisions were made, including investigated-and-rejected alternatives).
-This file describes what actually exists, as of v0.1.1.
+This file describes what actually exists, as of v0.1.3.
 
 ## Overview
 
@@ -59,6 +59,9 @@ Sources/
     ToastPanel.swift          transient acknowledgment toasts, top-right under menu bar
                               (position rationale: same neighborhood as the menu action
                               and later notifications)
+    HelpWindow.swift          "Help…" menu item: non-modal window describing the hotkey,
+                              every menu item, indicators, and required permissions —
+                              keep it in sync when menu items change
   susurro-cli/              transcription harness: susurro-cli <model> <wav...>
                               (fixture corpus regression + engine testing)
 Tests/SusurroTests/         golden tests (pinned to the Python predecessor's output),
@@ -88,7 +91,11 @@ key up
         [TranscriptCleaner.clean()]  only if AI Cleanup toggled on; ~1s+; falls back
         → MainActor:
             TextInjector.type(text)  CGEvent posting into focused app
-            clipboard = text         safety net (secure-input fields block typing)
+            [clipboard = text]       only if the "Copy Transcript to Clipboard"
+                                     toggle is on (default OFF — user clipboard is
+                                     sacred), OR IsSecureEventInputEnabled() is true
+                                     (password fields drop synthetic keystrokes; the
+                                     copy + a toast keep the words from being lost)
 ```
 
 ## Concurrency model
@@ -111,6 +118,7 @@ key up
 | Active model | UserDefaults `activeModelID` (default "small.en") |
 | PTT key | UserDefaults `pttKeyID` (default rightOption) |
 | AI cleanup | UserDefaults `llmCleanupEnabled` (default false) |
+| Clipboard copy | UserDefaults `copyToClipboard` (default false; secure-input auto-copy is unconditional) |
 | Login item | SMAppService.mainApp |
 
 Note: `activeModelID` has a value even when no model file exists — always pair
