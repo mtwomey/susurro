@@ -1,6 +1,13 @@
 # Susurro — your amanuensis
 ## PTT Rewrite Plan — Native macOS App (Swift)
 
+> **Status: historical document.** This is the working plan the app was built
+> from (July 2026), preserved for the *reasoning* — decisions, spike results,
+> investigations, rejected alternatives. Where it differs from reality (e.g. a
+> SwiftUI settings window became menu items; history was cut from v1), reality
+> wins: see **ARCHITECTURE.md** for as-built structure and **DEVELOPMENT.md**
+> for workflow. All six milestones shipped; v0.1.1 released.
+
 *Draft v2 — 2026-07-11. Decisions from spike + interview.*
 
 **Name:** Susurro (Latin, "I whisper" — a nod to the engine underneath), tagline "your amanuensis." Collision-checked against the macOS dictation space: clear.
