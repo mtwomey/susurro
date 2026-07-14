@@ -45,12 +45,12 @@ Self-tracked (Susurro remembers what *it* typed and where — no field read).
 See SMART_SPACING_PLAN.md for why an earlier Accessibility-based design was
 abandoned (it silently did nothing in Electron apps, browsers, and Terminal).
 
-- [ ] Toggle on: dictate a sentence ending in `.`, then dictate again into
-      the same field without switching apps — a space appears before the
-      new text
-- [ ] Same, ending in `!` or `?` — space appears
-- [ ] Dictate a sentence ending in a letter, digit, or comma, then dictate
-      again — no extra space
+- [ ] Toggle on: dictate anything, then dictate again into the same field
+      without switching apps — a space appears before the new text,
+      regardless of what the first dictation ended with (letter, digit,
+      comma, `.`, `!`, `?`, closing quote/paren — all the same now)
+- [ ] Dictate something ending in a space you said explicitly (or that
+      already ends in whitespace) — no doubled-up space
 - [ ] Toggle off (default): no behavior change at all vs. today
 - [ ] Works the same in TextEdit/Notes, in an Electron app (Slack, VS Code,
       or this app itself), in Terminal, and in a browser text field — this
