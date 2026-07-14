@@ -18,7 +18,9 @@ import Foundation
 /// (or switches to a different window in the *same* app) between
 /// dictations.
 public struct DictationMemory {
-    private static let contextLength = 8
+    // SpacingRule only ever looks at the single character immediately
+    // before the cursor.
+    private static let contextLength = 1
 
     private var last: (pid: pid_t, tail: String)?
 
