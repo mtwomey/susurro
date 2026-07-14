@@ -19,14 +19,30 @@ leaves your machine.
 - Apple Silicon Mac, macOS 15+ (AI Cleanup requires macOS 26 + Apple Intelligence)
 - ~600 MB free RAM while running (default small.en model)
 
-## Installing (prebuilt zip)
+## Installing
+
+### Option A — Homebrew (recommended)
+
+```bash
+brew install --cask mtwomey/susurro/susurro
+```
+
+Homebrew handles the Gatekeeper quarantine flag automatically — no "Open
+Anyway" dance required. To upgrade later:
+
+```bash
+brew upgrade --cask susurro
+```
+
+### Option B — Manual zip
 
 Download the latest zip from [Releases](https://github.com/mtwomey/susurro/releases).
 
 1. Unzip and drag **Susurro.app** to `/Applications`
 2. Launch it. macOS will refuse ("Apple could not verify…") because this build
-   isn't notarized: open **System Settings → Privacy & Security**, scroll down,
-   click **Open Anyway**, then confirm
+   isn't notarized. Two options:
+   - **System Settings → Privacy & Security**, scroll down, click **Open Anyway**
+   - Or from Terminal: `xattr -dr com.apple.quarantine /Applications/Susurro.app`
 3. Grant the two permissions when prompted:
    - **Microphone** (recording)
    - **Accessibility** (the hold-key listener and typing) — System Settings →
@@ -83,3 +99,4 @@ Access, or edit `SIGN_ID` in the Makefile.
 - `PLAN.md` — historical design doc: decisions, spike data, investigations,
   rejected alternatives, v2 parking lot
 - `CHECKLIST.md` — manual release acceptance checklist
+- `docs/releasing.md` — step-by-step release process including Homebrew tap update
