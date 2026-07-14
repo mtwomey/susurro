@@ -40,9 +40,13 @@ Download the latest zip from [Releases](https://github.com/mtwomey/susurro/relea
 
 1. Unzip and drag **Susurro.app** to `/Applications`
 2. Launch it. macOS will refuse ("Apple could not verify…") because this build
-   isn't notarized. Two options:
-   - **System Settings → Privacy & Security**, scroll down, click **Open Anyway**
-   - Or from Terminal: `xattr -dr com.apple.quarantine /Applications/Susurro.app`
+   isn't notarized. Strip the quarantine flag from Terminal:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Susurro.app
+   ```
+   > **Note:** On managed/corporate Macs the "Open Anyway" button in System
+   > Settings may be hidden by MDM policy — the `xattr` command above is the
+   > reliable workaround in that case.
 3. Grant the two permissions when prompted:
    - **Microphone** (recording)
    - **Accessibility** (the hold-key listener and typing) — System Settings →
