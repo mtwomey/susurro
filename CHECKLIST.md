@@ -41,23 +41,31 @@ automated: real apps, real permissions, real hardware events.
 
 ## Smart Spacing (opt-in, default off)
 
-- [ ] Toggle on: dictate into a field, click back in after a period, dictate
-      again — a space appears before the new text
-- [ ] Same, but field ends in `!` / `?` / `."` (closing quote/paren after
-      the sentence-ender) — space appears
-- [ ] Field ends in a letter, digit, or comma — no extra space
-- [ ] Field ends in `. ` (trailing space) or a blank line after `.` — no
-      *double* space; still triggers correctly once
+Self-tracked (Susurro remembers what *it* typed and where — no field read).
+See SMART_SPACING_PLAN.md for why an earlier Accessibility-based design was
+abandoned (it silently did nothing in Electron apps, browsers, and Terminal).
+
+- [ ] Toggle on: dictate a sentence ending in `.`, then dictate again into
+      the same field without switching apps — a space appears before the
+      new text
+- [ ] Same, ending in `!` or `?` — space appears
+- [ ] Dictate a sentence ending in a letter, digit, or comma, then dictate
+      again — no extra space
 - [ ] Toggle off (default): no behavior change at all vs. today
-- [ ] Dictate into an app with poor/no Accessibility support (e.g. some
-      Electron apps, Terminal) — no crash, no space, silent no-op
-- [ ] Dictate mid-IME-composition (e.g. a Pinyin/Kana candidate window open)
-      — no crash, no space
-- [ ] Dictate into a rich text / contenteditable area in both Chrome and
-      Safari — same behavior in both
-- [ ] Dictate into a fresh empty field — no space (nothing before cursor)
+- [ ] Works the same in TextEdit/Notes, in an Electron app (Slack, VS Code,
+      or this app itself), in Terminal, and in a browser text field — this
+      is the whole point of the self-tracking redesign; regressions here are
+      the highest-priority thing to catch
+- [ ] Dictate, then switch to a different app, then switch back and dictate
+      again — no space (memory resets on app switch, as designed)
+- [ ] Dictate, then manually type or delete characters by hand, then dictate
+      again — Susurro won't notice the manual edit (documented limitation,
+      not a bug); confirm this doesn't crash or misbehave, just doesn't
+      account for the hand-typed change
+- [ ] First dictation after launch (nothing typed yet this session) — no
+      space, no crash
 - [ ] Password field — unaffected; typing still blocked/copied as before,
-      and no perceptible delay from an Accessibility read being attempted
+      and the memory is cleared rather than recording secure-field content
 
 ## Fresh-machine install (before sharing)
 

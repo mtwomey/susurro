@@ -5,7 +5,7 @@ import Foundation
 /// decide whether the next dictated transcript should get a leading space
 /// prepended. Deliberately has no Accessibility/AppKit dependency so it can
 /// be unit-tested without a live focused text field — see SMART_SPACING_PLAN.md.
-enum SpacingRule {
+public enum SpacingRule {
     private static let sentenceEnders: Set<Character> = [".", "!", "?"]
     private static let closingWrappers: Set<Character> = ["\"", "'", ")", "\u{201D}", "\u{2019}", "\u{00BB}", "\u{203A}"]
 
@@ -13,7 +13,7 @@ enum SpacingRule {
     /// whitespace/newlines *not yet* stripped — this function strips them.
     /// nil (unreadable field) always yields false, matching Smart Spacing's
     /// "any uncertainty means do nothing" fallback.
-    static func needsLeadingSpace(beforeCursor tail: String?) -> Bool {
+    public static func needsLeadingSpace(beforeCursor tail: String?) -> Bool {
         guard let tail else { return false }
 
         // Character.isWhitespace covers newlines too, so this one drop(while:)

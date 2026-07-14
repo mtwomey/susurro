@@ -1,36 +1,16 @@
 # Smart Spacing — feature plan
 
-> Status: **built**, on branch `feature/smart-spacing`. Companion to
-> `ARCHITECTURE.md` (as-built structure) and `PLAN.md` (v1 historical design
-> doc) — where this document and reality differ, they win, per this repo's
-> usual convention. See "As built" below for what changed during
-> implementation.
-
-## As built (deviations from the plan above)
-
-- **`FocusedFieldInspector.swift` lives in `Sources/Susurro`, not
-  `Sources/SusurroCore`.** All other AppKit/Accessibility/CoreGraphics
-  system-integration code (`TextInjector`, `HotkeyMonitor`) already lives in
-  the app target, not the shared core library — `SusurroCore` has no AppKit
-  dependency today, and this keeps that boundary intact. `SpacingRule` (the
-  pure decision logic) stays in `SusurroCore` as planned and is the piece
-  that's actually unit-tested.
-- **No `TextBeforeCursorProviding` protocol seam was added.** Matching the
-  existing precedent for `TextInjector`/`HotkeyMonitor` (also un-mocked,
-  verified only via `CHECKLIST.md`), `FocusedFieldInspector`'s AX plumbing is
-  exercised manually rather than through a fake-provider unit test. Only
-  `SpacingRule` has automated coverage (`Tests/SusurroTests/SpacingRuleTests.swift`).
-- **`SpacingRule.needsLeadingSpace` takes the raw multi-character tail
-  string, not a single `Character`.** The "closing quote/paren after a
-  sentence-ender" case needs to look at *two* trailing characters (the
-  wrapper, then what's behind it), so the API takes
-  `beforeCursor tail: String?` and does its own trailing-whitespace trim
-  internally, rather than the caller pre-trimming down to one `Character`.
-- **The secure-input guard is stricter than "AX read should come back
-  masked."** `AppDelegate.pttReleased` checks `IsSecureEventInputEnabled()`
-  *before* calling `FocusedFieldInspector` at all, so no AX read is even
-  attempted while a secure field is focused — belt-and-suspenders beyond
-  relying on the OS to mask the value.
+> Status: **built**, on branch `feature/smart-spacing`, using the
+> **self-tracking design** (see below). Companion to `ARCHITECTURE.md`
+> (as-built structure) and `PLAN.md` (v1 historical design doc) — where this
+> document and reality differ, they win, per this repo's usual convention.
+>
+> This feature went through two designs. The first (Accessibility-based field
+> reading) was built, tested on real hardware, and abandoned when testing
+> showed it silently failed almost everywhere except native Cocoa apps. The
+> "Pivot" section below explains why, and "Historical: AX-based design (superseded)"
+> preserves the abandoned design for the reasoning, per this repo's usual
+> practice of keeping rejected-alternative writeups (see `PLAN.md`).
 
 ## Problem
 
@@ -43,198 +23,214 @@ separating space: `...done.Next thought...` instead of
 
 ## Behavior
 
-On hotkey release, before typing the new transcript: if the focused field
-already has text ending (ignoring trailing whitespace/newlines) in `.`, `!`,
-or `?` — optionally followed by a closing quote or paren (`"`, `'`, `)`, `”`,
-`’`) — prepend a single space to the transcript before typing it.
+On hotkey release, before typing the new transcript: if the tail of the text
+Susurro itself last typed — into the same app that's still frontmost — ends
+(ignoring trailing whitespace/newlines) in `.`, `!`, or `?` — optionally
+followed by a closing quote or paren (`"`, `'`, `)`, `”`, `’`) — prepend a
+single space to the transcript before typing it.
 
 Decisions locked in:
 
 | Question | Decision |
 |---|---|
 | Trigger punctuation | `.` `!` `?` (plus a trailing closing quote/paren after one of those) |
-| Trailing whitespace/newlines already in the field | Skipped — check the last *non-whitespace* character, not the literal last character |
-| Field unreadable (no AX support, wrong role, empty, permission hiccup) | Silently do nothing — behaves exactly like today, never blocks or errors |
-| Rollout | New opt-in menu toggle, **default off** — "Smart Spacing", same pattern as "Copy Transcript to Clipboard" |
+| Trailing whitespace/newlines already typed | Skipped — check the last *non-whitespace* character, not the literal last character |
+| Mechanism | Self-tracking: Susurro remembers the tail of what *it* last typed and which app (pid) it typed into — **not** a read of the field's live contents |
+| Memory invalid (different app now frontmost, nothing typed yet this session, secure field last time) | Silently do nothing — behaves exactly like today, never blocks or errors |
+| Rollout | Opt-in menu toggle, **default off** — "Smart Spacing", same pattern as "Copy Transcript to Clipboard" |
 
-## Why this needs new capability
+## Pivot: why this isn't Accessibility-based
 
-Susurro has never read a text field's contents — `TextInjector` only *writes*
-via CGEvents (see `ARCHITECTURE.md`). Reading the focused field's existing
-text and cursor position requires the macOS **Accessibility (AX) API**
-(`AXUIElement`), which is a new capability for this codebase, though it rides
-on the Accessibility permission Susurro already requires for the hotkey — no
-new permission prompt.
+The first implementation read the focused field's live content via the
+Accessibility API (`AXUIElement`) — see the historical section below for the
+full design. It was built, unit-tested, and installed on real hardware, and
+manual testing turned up a fundamental problem rather than a bug to patch:
 
-AX text-reading is not universally reliable: some Electron apps, some
-terminal emulators, and custom-drawn text views expose partial or no AX text
-attributes. That's why the fallback is unconditionally silent — this feature
-must never be able to make dictation worse or throw an error the user sees.
+**`kAXSelectedTextRangeAttribute`** — the standard way to ask "where's the
+cursor" — is only reliably implemented by native Cocoa text views (TextEdit,
+Notes, Mail, Pages). Testing against the actual running app confirmed, with
+debug logging added specifically to pin this down:
 
-## Design
+- **TextEdit**: worked correctly.
+- **Claude desktop, other Electron apps, Chromium/WebKit web content**
+  (browser fields): the AX call chain reached the focused app and element
+  fine, but `kAXSelectedTextRangeAttribute` itself came back unreadable.
+  Chromium/Electron expose cursor position through a completely different,
+  non-standard mechanism (`AXTextMarker`/`AXTextMarkerRange`, opaque tokens
+  rather than a plain `CFRange`), which the AX-based design never handled.
+- **Terminal**: same failure — its custom-drawn text view doesn't expose
+  per-character selection via AX at all.
 
-> Revised after independent review (see "Review findings" below) — the AX
-> read must be bounded and timeout-guarded, not a full-value read on an
-> unbounded main-thread call.
+Along the way, a real bug was also found and fixed (a too-tight
+`AXUIElementSetMessagingTimeout` of 150ms was rejecting legitimate-but-slower
+cross-process round trips, misreported as "no focused application"), but
+fixing that only got as far as isolating the deeper, structural gap above.
+Since dictating twice into a chat box, a terminal, or a browser field is
+probably *more* common than doing it in TextEdit, an AX-based design would
+have shipped a feature that quietly does nothing in most of the places it
+matters — an unacceptable gap, not a tuning problem.
 
-**New file: `Sources/SusurroCore/FocusedFieldInspector.swift`**
+**Resolution:** Susurro already knows what it just typed, because it's the
+one that typed it (see `TextInjector`). Instead of reading the target app's
+UI at all, `DictationMemory` (`Sources/SusurroCore/DictationMemory.swift`)
+records the tail of the last-typed transcript plus the frontmost app's pid
+at the time. The next dictation checks whether the same app is still
+frontmost and, if so, reuses that remembered tail — no Accessibility read,
+no per-app compatibility gap, works everywhere Susurro can type.
+
+Trade-offs accepted with this design:
+- Doesn't notice if the user manually edited the field (typed, deleted,
+  pasted) between two dictations — the memory only reflects what *Susurro*
+  typed, not the field's true live state.
+- Doesn't notice switching to a *different window in the same app* — only
+  the frontmost app's pid is tracked, not a specific window. Switching to
+  Finder and back to the exact same document mid-app won't trip it, but
+  switching between two windows of the same app might incorrectly carry the
+  memory over.
+- Resets on every app switch and on every launch (in-memory only, not
+  persisted across quits) — both correct/safe defaults, since "no memory"
+  just means no leading space gets added, same as today.
+
+## Design (as built)
+
+**`Sources/SusurroCore/DictationMemory.swift`** — pure state, no AppKit/AX
+dependency, fully unit-tested:
 
 ```swift
-protocol TextBeforeCursorProviding {
-    /// Returns up to `maxLength` characters immediately before the insertion
-    /// point in the system's focused text element, or nil if unreadable (no
-    /// focused element/app, non-text role, non-empty selection, AX error or
-    /// timeout, empty text before cursor, etc). Never throws; failure is nil.
-    func textBeforeCursor(maxLength: Int) -> String?
-}
-
-enum FocusedFieldInspector: TextBeforeCursorProviding {
-    static func textBeforeCursor(maxLength: Int) -> String? { ... }
+public struct DictationMemory {
+    public mutating func recordTyped(_ text: String, intoPID pid: pid_t)
+    public mutating func clear()
+    public func tailIfStillFocused(pid: pid_t) -> String?
 }
 ```
 
-The protocol seam exists purely for testability (see Testing, below) — the
-real implementation is the only thing that talks to AX.
-
-Implementation sketch:
-1. Set `AXUIElementSetMessagingTimeout` (~100–150ms) on the AX calls used
-   here. AX round-trips are synchronous cross-process calls that block until
-   the target app's main thread responds; without a timeout, a busy or
-   hung frontmost app can stall Susurro's own main runloop — the same
-   runloop `HotkeyMonitor`'s CGEventTap lives on (see ARCHITECTURE.md's note
-   that disabled taps get auto re-enabled, implying this has bitten the app
-   before via other stalls). A timeout firing is just another "unreadable"
-   case → silent no-op.
-2. `AXUIElementCreateSystemWide()` → copy `kAXFocusedApplicationAttribute`
-   → then `kAXFocusedUIElementAttribute` on *that* element (the two-step
-   path is more reliable across apps than going system-wide → focused
-   element directly).
-3. Read `kAXSelectedTextRangeAttribute` for the cursor position. This comes
-   back as an `AXValue`; check `AXValueGetType(_:) == .cfRange` before
-   calling `AXValueGetValue` to unwrap the `CFRange` — this is the first AX
-   read anywhere in the codebase, so there's no existing precedent to crash
-   into. An empty-length range = plain cursor; a non-empty range is a
-   selection ("replace," out of scope) → treat as unreadable/no-op.
-4. Never read the full field value. Always request a small bounded slice —
-   the last `maxLength` characters (e.g. 8) ending at the cursor offset —
-   via `kAXStringForRangeParameterizedAttribute` directly. Reading the whole
-   `kAXValueAttribute` first (as an earlier draft of this plan proposed) is
-   both slower on large documents/chat histories and means briefly holding
-   content that may be sensitive even outside a secure field; a bounded read
-   avoids that entirely.
-5. Trim trailing whitespace/newlines from the returned slice, return the
-   last remaining character (or nil if empty).
-6. On any AX failure (nil attribute, wrong type, timeout, thrown-away
-   selection), log once via the existing `slog(_:)` helper before returning
-   nil — the feature stays silent to the *user*, but a support conversation
-   ("Smart Spacing isn't doing anything in App X") needs something to grep
-   for in the terminal log.
-
-**`Sources/SusurroCore` pure logic, unit-testable in isolation:**
+**`Sources/SusurroCore/SpacingRule.swift`** — pure decision logic, unchanged
+in spirit from the original plan (this piece never depended on how the tail
+was obtained):
 
 ```swift
-enum SpacingRule {
-    static func needsLeadingSpace(before char: Character?) -> Bool
+public enum SpacingRule {
+    public static func needsLeadingSpace(beforeCursor tail: String?) -> Bool
 }
 ```
 
-Keeps the "is this a sentence-ending char (optionally through a closing
-quote/paren)" logic separate from the AX plumbing, so it can be golden-tested
-like `PostProcessor` without a live focused text field.
+`tail` is the raw text immediately before where the cursor *was*, untrimmed;
+the function strips trailing whitespace/newlines itself, then checks for a
+sentence-ender or a closing quote/paren behind one.
 
-**`AppDelegate.swift` wiring:**
+**`AppDelegate.swift` wiring** — in `pttReleased`'s `MainActor.run` block,
+immediately before `TextInjector.type(text)`:
 
-- New `UserDefaults` key `smartSpacingEnabled` (default `false`), same
-  get/set pattern as `copyToClipboard`.
-- New menu item "Smart Spacing" beside "Copy Transcript to Clipboard",
-  toggled the same way, with a toast on flip.
-- In `pttReleased`, immediately before `TextInjector.type(text)`:
-  ```swift
-  if smartSpacingEnabled,
-     let ch = FocusedFieldInspector.lastNonWhitespaceCharBeforeCursor(),
-     SpacingRule.needsLeadingSpace(before: ch) {
-      text = " " + text
-  }
-  ```
-  This must run on the main thread (AX calls are not guaranteed thread-safe;
-  `pttReleased`'s `MainActor.run` block, right before injection, is already
-  the right spot).
+```swift
+let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+if !secureInputActive, smartSpacingEnabled, let frontmostPID,
+   SpacingRule.needsLeadingSpace(beforeCursor: dictationMemory.tailIfStillFocused(pid: frontmostPID)) {
+    text = " " + text
+}
+TextInjector.type(text)
+if !secureInputActive, let frontmostPID {
+    dictationMemory.recordTyped(text, intoPID: frontmostPID)
+} else {
+    dictationMemory.clear()
+}
+```
+
+`smartSpacingEnabled` is a `UserDefaults`-backed toggle (default `false`),
+same pattern as `copyToClipboard`, with a "Smart Spacing" menu item next to
+it and a toast on flip (which also clears `dictationMemory` when turned off).
 
 ## Testing
 
-- **Unit tests** (`Tests/SusurroTests`): `SpacingRule.needsLeadingSpace` —
-  table-driven over `.`, `!`, `?`, closing quote/paren combinations, letters,
-  digits, whitespace, nil. Pure function, no AX dependency, fits the existing
-  golden-test style.
-- **`FocusedFieldInspector`'s own trim/slice/error-handling logic gets a test
-  seam too**, via the `TextBeforeCursorProviding` protocol: a fake provider
-  returning canned strings (including nil, empty, and whitespace-only) lets
-  the "trim trailing whitespace, take the last char" logic be unit-tested
-  without a live AX tree — only the AX plumbing itself (steps 1–4 above)
-  stays untestable outside a real app.
-- **Manual acceptance** (`CHECKLIST.md` — new section "Smart Spacing"):
-  - Toggle on: dictate into a field, click back in after a period, dictate
-    again → space appears before the new text.
-  - Same, but field ends in `!` / `?` / `."` → space appears.
-  - Same, but field ends in a letter/comma → no extra space.
-  - Field ends in `. ` (trailing space) or a newline after `.` → no *double*
-    space; still triggers once correctly.
-  - Toggle off (default) → no behavior change at all vs. today.
-  - Dictate into an app with poor/no AX support (e.g. some Electron apps,
-    Terminal) → no crash, no space, silent no-op.
-  - Dictate mid-IME-composition (e.g. a Pinyin/Kana candidate window open)
-    → no crash; composing text isn't committed yet, so treat as no
-    trustworthy cursor position → silent no-op.
-  - Dictate into a rich contenteditable area in Chrome and in Safari
-    (AXWebArea bridging differs between the two) → same behavior in both,
-    or documented if not.
-  - Dictate into a busy/hung app (simulate by picking a genuinely slow app,
-    or spin the frontmost app's main thread) → Susurro's hotkey and overlay
-    remain responsive; no multi-second stall.
-  - Dictate into a fresh empty field → no space (nothing before cursor).
-  - Password field → unaffected (secure-input path is untouched; verify the
-    AX read itself also comes back empty/masked for a secure field, as
-    defense in depth beyond the existing `IsSecureEventInputEnabled()` check).
-
-## Review findings (independent review, folded in above)
-
-An independent reviewer went over this plan before implementation started.
-Two items were **blocking** and are now incorporated into the Design section
-above rather than left as commentary:
-
-1. **No AX call timeout** — the original sketch ran the AX read on the main
-   thread and called that a thread-safety measure; the real risk is a
-   synchronous cross-process call blocking the runloop that the hotkey's
-   CGEventTap also lives on. Fixed via `AXUIElementSetMessagingTimeout` plus
-   treating a timeout as just another unreadable case.
-2. **Full-value read instead of bounded range** — the original step 3 read
-   `kAXValueAttribute` (the whole field) first and only fell back to a
-   ranged read for "large" views. Fixed by always requesting a small bounded
-   slice directly.
-
-Should-fix items also folded in: `AXValue`/`CFRange` unwrapping mechanics
-spelled out explicitly (step 3); focused element obtained via
-`kAXFocusedApplicationAttribute` → `kAXFocusedUIElementAttribute` rather than
-system-wide → focused element directly (step 2); a test seam added for
-`FocusedFieldInspector`'s own logic (Testing section); a diagnostic
-`slog` line added on AX failure (step 6); IME composition, Chrome/Safari
-`AXWebArea` contenteditable, and secure-field-masking added to the manual
-checklist.
-
-Not folded in as a plan change (tracked here instead, since it's not
-Susurro-specific): CJK/ideographic sentence-ending punctuation (`。` `！`
-`？`) isn't handled — low priority since the whisper engine in use
-(`small.en`) is English-only per `ARCHITECTURE.md`.
+- **Unit tests** (`Tests/SusurroTests`):
+  - `SpacingRuleTests.swift` — table-driven over `.`, `!`, `?`, closing
+    quote/paren combinations, letters, digits, commas, whitespace, nil.
+  - `DictationMemoryTests.swift` — recorded tail returned for a matching
+    pid, hidden for a different pid, cleared explicitly, short text handled,
+    re-recording overwrites the previous entry. Fully mockable (`pid_t` +
+    `String` only), no AX/AppKit involved.
+- **Manual acceptance** (`CHECKLIST.md` — "Smart Spacing" section): app
+  switching resets the memory, works identically across TextEdit/Electron/
+  Terminal/browser (the whole point of the redesign), manual edits between
+  dictations are a documented non-goal rather than a bug, secure fields
+  clear rather than record.
 
 ## Out of scope / risks
 
-- No attempt to detect or fix a selection ("replace this text") — only the
-  plain-cursor case is handled; a non-empty selection is treated as
-  unreadable and produces no space.
-- No new permission dialog, but this is the first code in the repo that
-  *reads* AX state rather than only posting keyboard events — worth a
-  security-review-style second look before merging, given breadth of apps it
-  will run against.
+- No attempt to detect a text *selection* ("replace this") — self-tracking
+  has no visibility into selections at all; if the user selects text and
+  dictates over it, Smart Spacing has no opinion (it only ever prepends to
+  what's being typed).
+- Window-level granularity within the same app isn't tracked (see Pivot
+  trade-offs above) — a known, accepted limitation, not a bug.
 - Not scoped to fix multi-space accumulation from *pre-existing* trailing
   whitespace the user typed manually — the whitespace-trim only affects this
   feature's own decision, it does not rewrite the field's existing content.
+
+---
+
+## Historical: AX-based design (superseded)
+
+Preserved for the reasoning and the independent-review process it went
+through, per this repo's convention of keeping rejected-alternative writeups
+(see `PLAN.md`). **Do not resurrect this without a concrete plan for
+Chromium's `AXTextMarker` API and Terminal's lack of AX text-position
+support** — both gaps were structural, not bugs.
+
+### Original behavior spec
+
+Read the focused field's existing text via the macOS Accessibility API
+(`AXUIElement`) and decide whether to prepend a space, instead of
+self-tracking what Susurro had typed.
+
+### Why it needed new capability
+
+Susurro had never read a text field's contents — `TextInjector` only
+*writes* via CGEvents. Reading the focused field's existing text and cursor
+position required `AXUIElement`, riding on the Accessibility permission
+Susurro already requires for the hotkey (no new permission prompt — macOS
+has one Accessibility checkbox covering both posting synthetic events and
+querying other apps' UI, not a separate "read" grant).
+
+### Design (as it was built and then removed)
+
+**`Sources/Susurro/FocusedFieldInspector.swift`** (deleted):
+1. `AXUIElementSetMessagingTimeout` on every AX call (~100–150ms originally;
+   found during testing to be too tight — see Pivot above) so a busy/hung
+   frontmost app can't stall Susurro's own main runloop, the same one
+   `HotkeyMonitor`'s CGEventTap lives on.
+2. `AXUIElementCreateSystemWide()` → `kAXFocusedApplicationAttribute` →
+   `kAXFocusedUIElementAttribute` on that element (two-step lookup, more
+   reliable across apps than system-wide → focused element directly).
+3. `kAXSelectedTextRangeAttribute` for cursor position (`AXValue` wrapping a
+   `CFRange`; `AXValueGetType(_:) == .cfRange` checked before unwrapping). An
+   empty-length range = plain cursor; non-empty = a selection, treated as
+   unreadable/no-op.
+4. A small bounded slice (last 8 characters before the cursor) via
+   `kAXStringForRangeParameterizedAttribute` — deliberately never the whole
+   field value, both for cost and to avoid holding more of a field's content
+   than necessary.
+5. On any failure, an `slog` line before returning nil — which is exactly
+   what made the Electron/Terminal/browser failures diagnosable rather than
+   just "mysteriously doesn't work."
+
+### Independent review (before the pivot)
+
+An independent reviewer went over this design before implementation and
+flagged two **blocking** issues, both fixed in the build above before the
+pivot was even discovered:
+1. **No AX call timeout** — fixed via `AXUIElementSetMessagingTimeout`
+   (though the chosen value turned out to still be part of the eventual
+   real-world bug — see Pivot).
+2. **Full-value read instead of bounded range** — fixed by always
+   requesting a small bounded slice directly rather than the whole field.
+
+Should-fix items also addressed: explicit `AXValue`/`CFRange` unwrapping;
+`kAXFocusedApplicationAttribute` → `kAXFocusedUIElementAttribute` two-step
+lookup; a diagnostic `slog` line on failure (this is precisely what
+localized the Electron/Terminal/browser gap during real-hardware testing);
+IME composition and Chrome/Safari `AXWebArea` contenteditable added to the
+manual checklist.
+
+Not folded in (tracked, not Susurro-specific): CJK/ideographic
+sentence-ending punctuation (`。` `！` `？`) — moot now, and was already low
+priority since the whisper engine in use (`small.en`) is English-only.
