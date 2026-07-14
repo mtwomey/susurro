@@ -15,7 +15,7 @@ DEPLOY_TGT  = 15.0
 # Stable self-signed identity — keeps TCC (Accessibility/mic) grants across rebuilds
 SIGN_ID     = Susurro Dev
 
-.PHONY: whisper app run test clean
+.PHONY: whisper app run test clean dist release
 
 whisper:
 	cmake -B $(WHISPER_DIR) vendor/whisper.cpp \
@@ -65,3 +65,22 @@ dist: app
 
 clean:
 	rm -rf .build $(BUILD_DIR)
+
+# Build dist zip, compute SHA256, update homebrew-susurro tap, and open for review
+# Usage: make release
+# Requires: ../homebrew-susurro to exist (clone https://github.com/mtwomey/homebrew-susurro)
+release: dist
+	$(eval VERSION := $(shell defaults read $(CURDIR)/$(BUILD_DIR)/$(APP_NAME).app/Contents/Info CFBundleShortVersionString))
+	$(eval ZIP := $(BUILD_DIR)/$(APP_NAME)-$(VERSION).zip)
+	$(eval SHA := $(shell shasum -a 256 $(ZIP) | awk '{print $$1}'))
+	@echo "Version : $(VERSION)"
+	@echo "SHA256  : $(SHA)"
+	@CASK=../homebrew-susurro/Casks/susurro.rb; \
+	sed -i '' "s/version \".*\"/version \"$(VERSION)\"/" $$CASK; \
+	sed -i '' "s/sha256 \".*\"/sha256 \"$(SHA)\"/" $$CASK; \
+	echo "✓ Updated $$CASK"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Upload $(ZIP) to a new GitHub release tagged v$(VERSION)"
+	@echo "  2. cd ../homebrew-susurro && git diff   # verify the cask changes"
+	@echo "  3. git -C ../homebrew-susurro commit -am 'Bump to $(VERSION)' && git push"
