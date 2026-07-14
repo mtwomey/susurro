@@ -48,6 +48,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var engine: WhisperEngine?
     private var axPollTimer: Timer?
 
+    // Set once if the mic-permission callback reports denial. Sticky for the
+    // rest of the run (TCC changes need a relaunch to take effect anyway) so
+    // that transient model load/download status updates — which share the
+    // same status menu item — can never silently clobber this more
+    // important, persistent warning. See setStatus(_:enabled:action:).
+    private var micAccessDenied = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
@@ -173,10 +180,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             slog("mic permission granted=\(granted)")
             if !granted {
                 Task { @MainActor [weak self] in
-                    self?.setStatus(
+                    guard let self else { return }
+                    self.micAccessDenied = true
+                    self.setStatus(
                         "Mic access denied — click to open Settings",
                         enabled: true,
-                        action: #selector(AppDelegate.openMicSettings)
+                        action: #selector(AppDelegate.openMicSettings),
+                        overridesMicWarning: true
                     )
                 }
             }
@@ -325,12 +335,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Shows (or updates) the status menu item — inserted back into the menu
     /// if it isn't there, since `loadEngine()` can run again later (model
     /// hot-swap, retry after failure) after `clearStatus()` removed it.
-    private func setStatus(_ title: String, enabled: Bool = false, action: Selector? = nil) {
+    ///
+    /// `recordItem` is shared between two unrelated concerns: transient
+    /// model load/download status, and the persistent mic-access-denied
+    /// warning. Without `overridesMicWarning`, a fast model load finishing
+    /// right after mic access was denied would silently clobber that
+    /// warning with "Loading model…"/clear it entirely — leaving no menu
+    /// indication of why dictation still doesn't work. Only the
+    /// mic-permission callback passes `overridesMicWarning: true`.
+    private func setStatus(
+        _ title: String,
+        enabled: Bool = false,
+        action: Selector? = nil,
+        overridesMicWarning: Bool = false
+    ) {
+        guard overridesMicWarning || !micAccessDenied else { return }
         recordItem.title = title
         recordItem.isEnabled = enabled
         recordItem.action = action
         if let menu = statusItem.menu, !menu.items.contains(recordItem) {
-            menu.insertItem(recordItem, at: 3) // right after title, hotkey status, and separator
+            // Anchored off hotkeyItem's live index rather than a hardcoded
+            // literal, so this can't silently drift if an item is ever
+            // inserted/removed above this point in the menu construction.
+            // Layout is: title, hotkeyItem, separator, [recordItem here].
+            let anchor = menu.items.firstIndex(of: hotkeyItem).map { $0 + 2 } ?? menu.items.count
+            menu.insertItem(recordItem, at: min(anchor, menu.items.count))
         }
     }
 
@@ -341,8 +370,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Removes the status item once there's nothing to report — dictation is
-    /// ready and available via the push-to-talk hotkey.
+    /// ready and available via the push-to-talk hotkey. Never clears a
+    /// mic-access-denied warning (see setStatus) — that's sticky for the
+    /// rest of the run.
     private func clearStatus() {
+        guard !micAccessDenied else { return }
         if let menu = statusItem.menu, menu.items.contains(recordItem) {
             menu.removeItem(recordItem)
         }
