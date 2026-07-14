@@ -41,22 +41,6 @@ final class HelpWindowController {
         small waveform pill appears in the bottom-right corner.
         """)
 
-        heading("Start Test Recording")
-        body("""
-        Record without the hotkey: click to start, click again to stop. The \
-        transcript goes to the clipboard only (nothing is typed). Handy for \
-        testing your microphone or a new model.
-        """)
-
-        heading("Edit Rules…")
-        body("""
-        Opens your rules file (rules.json). It controls spoken punctuation \
-        ("comma", "period", "quote … end quote", "new line"), custom word \
-        fix-ups for words Susurro mishears, and advanced regex rules. Edits \
-        apply on your next dictation — no restart needed. The file explains \
-        its own format at the top.
-        """)
-
         heading("Model")
         body("""
         Choose the speech-recognition model. Smaller models are faster but \
@@ -70,6 +54,22 @@ final class HelpWindowController {
         body("""
         Pick which key you hold to dictate: Right Option, Right Command, or \
         Right Control. Takes effect immediately.
+        """)
+
+        heading("Start at Login")
+        body("""
+        When checked, Susurro launches automatically when you log in.
+        """)
+
+        heading("Smart Spacing")
+        body("""
+        Off by default. When checked, dictating again right after Susurro \
+        typed something adds a leading space (unless one's already there), \
+        so back-to-back dictations into the same field don't run together. \
+        Susurro tracks this itself — it doesn't read the field's contents — \
+        so it only applies if you haven't switched to a different app since \
+        your last dictation, and it won't notice text you typed by hand in \
+        between.
         """)
 
         heading("AI Cleanup")
@@ -91,20 +91,18 @@ final class HelpWindowController {
         lost.
         """)
 
-        heading("Smart Spacing")
+        heading("About Susurro")
         body("""
-        Off by default. When checked, dictating again right after Susurro \
-        typed something adds a leading space (unless one's already there), \
-        so back-to-back dictations into the same field don't run together. \
-        Susurro tracks this itself — it doesn't read the field's contents — \
-        so it only applies if you haven't switched to a different app since \
-        your last dictation, and it won't notice text you typed by hand in \
-        between.
+        Shows the installed version number and author.
         """)
 
-        heading("Start at Login")
+        heading("Edit Rules…")
         body("""
-        When checked, Susurro launches automatically when you log in.
+        Opens your rules file (rules.json). It controls spoken punctuation \
+        ("comma", "period", "quote … end quote", "new line"), custom word \
+        fix-ups for words Susurro mishears, and advanced regex rules. Edits \
+        apply on your next dictation — no restart needed. The file explains \
+        its own format at the top.
         """)
 
         heading("Recording indicators")

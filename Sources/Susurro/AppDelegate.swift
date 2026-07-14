@@ -48,7 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var engine: WhisperEngine?
     private var axPollTimer: Timer?
 
-    private var sigSource: DispatchSourceSignal?
+    // Set once if the mic-permission callback reports denial. Sticky for the
+    // rest of the run (TCC changes need a relaunch to take effect anyway) so
+    // that transient model load/download status updates — which share the
+    // same status menu item — can never silently clobber this more
+    // important, persistent warning. See setStatus(_:enabled:action:).
+    private var micAccessDenied = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -63,28 +68,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let title = NSMenuItem(title: "Susurro — your amanuensis", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
-        menu.addItem(.separator())
 
-        recordItem = NSMenuItem(
-            title: "Loading model…",
-            action: #selector(toggleTestRecording),
-            keyEquivalent: "r"
-        )
-        recordItem.target = self
-        recordItem.isEnabled = false
-        menu.addItem(recordItem)
-
-        hotkeyItem = NSMenuItem(title: "Hotkey: checking permission…", action: nil, keyEquivalent: "")
+        // Hotkey status: a parenthetical subtitle right under the app name —
+        // informational only (isEnabled stays false), not a command among
+        // the actionable items below the divider. See setHotkeyStatus(_:).
+        hotkeyItem = NSMenuItem(title: "(checking permission…)", action: nil, keyEquivalent: "")
         hotkeyItem.isEnabled = false
         menu.addItem(hotkeyItem)
 
-        let rulesItem = NSMenuItem(
-            title: "Edit Rules…",
-            action: #selector(openRules),
-            keyEquivalent: ""
-        )
-        rulesItem.target = self
-        menu.addItem(rulesItem)
+        menu.addItem(.separator())
+
+        // Status line: shows model load/download progress and permission
+        // problems. Removed from the menu once the engine is ready — see
+        // setStatus(_:enabled:action:) / clearStatus().
+        recordItem = NSMenuItem(title: "Loading model…", action: nil, keyEquivalent: "")
+        recordItem.target = self
+        recordItem.isEnabled = false
+        menu.addItem(recordItem)
 
         let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
         modelMenu = NSMenu(title: "Model")
@@ -92,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         modelMenu.delegate = self // refresh state every time the submenu opens
         menu.addItem(modelItem)
         rebuildModelMenu()
+        models.onProgress = { [weak self] _, _ in self?.rebuildModelMenu() }
 
         let keyItem = NSMenuItem(title: "Push-to-Talk Key", action: nil, keyEquivalent: "")
         let keyMenu = NSMenu(title: "Push-to-Talk Key")
@@ -104,6 +105,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         keyItem.submenu = keyMenu
         menu.addItem(keyItem)
+
+        menu.addItem(.separator())
+
+        let loginItem = NSMenuItem(
+            title: "Start at Login",
+            action: #selector(toggleLoginItem(_:)),
+            keyEquivalent: ""
+        )
+        loginItem.target = self
+        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(loginItem)
+
+        let smartSpacingItem = NSMenuItem(
+            title: "Smart Spacing",
+            action: #selector(toggleSmartSpacing(_:)),
+            keyEquivalent: ""
+        )
+        smartSpacingItem.target = self
+        smartSpacingItem.state = smartSpacingEnabled ? .on : .off
+        menu.addItem(smartSpacingItem)
 
         cleanupItem = NSMenuItem(title: "AI Cleanup", action: #selector(cleanupAction), keyEquivalent: "")
         cleanupItem.target = self
@@ -126,36 +147,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         clipboardItem.state = copyToClipboard ? .on : .off
         menu.addItem(clipboardItem)
 
-        let smartSpacingItem = NSMenuItem(
-            title: "Smart Spacing",
-            action: #selector(toggleSmartSpacing(_:)),
-            keyEquivalent: ""
-        )
-        smartSpacingItem.target = self
-        smartSpacingItem.state = smartSpacingEnabled ? .on : .off
-        menu.addItem(smartSpacingItem)
-
-        let loginItem = NSMenuItem(
-            title: "Start at Login",
-            action: #selector(toggleLoginItem(_:)),
-            keyEquivalent: ""
-        )
-        loginItem.target = self
-        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        menu.addItem(loginItem)
-        models.onProgress = { [weak self] _, _ in self?.rebuildModelMenu() }
-
         menu.addItem(.separator())
+
+        let aboutItem = NSMenuItem(title: "About Susurro", action: #selector(showAbout), keyEquivalent: "")
+        aboutItem.target = self
+        menu.addItem(aboutItem)
 
         let helpItem = NSMenuItem(title: "Help…", action: #selector(showHelp), keyEquivalent: "")
         helpItem.target = self
         menu.addItem(helpItem)
 
-        menu.addItem(NSMenuItem(
-            title: "Quit Susurro",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        ))
+        let rulesItem = NSMenuItem(
+            title: "Edit Rules…",
+            action: #selector(openRules),
+            keyEquivalent: ""
+        )
+        rulesItem.target = self
+        menu.addItem(rulesItem)
+
+        let quitItem = NSMenuItem(title: "Quit Susurro", action: #selector(quit), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
         menu.autoenablesItems = false
         menu.delegate = self // refresh AI-cleanup availability when menu opens
         statusItem.menu = menu
@@ -168,9 +180,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             slog("mic permission granted=\(granted)")
             if !granted {
                 Task { @MainActor [weak self] in
-                    self?.recordItem.title = "Mic access denied — click to open Settings"
-                    self?.recordItem.action = #selector(AppDelegate.openMicSettings)
-                    self?.recordItem.isEnabled = true
+                    guard let self else { return }
+                    self.micAccessDenied = true
+                    self.setStatus(
+                        "Mic access denied — click to open Settings",
+                        enabled: true,
+                        action: #selector(AppDelegate.openMicSettings),
+                        overridesMicWarning: true
+                    )
                 }
             }
         }
@@ -194,16 +211,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         loadEngine()
-
-        // Debug/testing hook: `kill -USR1 <pid>` toggles recording,
-        // enabling scripted experiments without a human at the hotkey.
-        signal(SIGUSR1, SIG_IGN)
-        let src = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
-        src.setEventHandler { [weak self] in
-            self?.toggleTestRecording()
-        }
-        src.resume()
-        sigSource = src
     }
 
     // MARK: - Models
@@ -317,7 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.rebuildModelMenu()
             } catch {
                 slog("auto-download failed: \(error)")
-                self?.recordItem.title = "Model download failed — retry from the Model menu"
+                self?.setStatus("Model download failed — retry from the Model menu")
                 self?.notify("Model download failed",
                              "Open the Model menu to retry. \(error.localizedDescription)")
                 self?.rebuildModelMenu()
@@ -325,16 +332,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Shows (or updates) the status menu item — inserted back into the menu
+    /// if it isn't there, since `loadEngine()` can run again later (model
+    /// hot-swap, retry after failure) after `clearStatus()` removed it.
+    ///
+    /// `recordItem` is shared between two unrelated concerns: transient
+    /// model load/download status, and the persistent mic-access-denied
+    /// warning. Without `overridesMicWarning`, a fast model load finishing
+    /// right after mic access was denied would silently clobber that
+    /// warning with "Loading model…"/clear it entirely — leaving no menu
+    /// indication of why dictation still doesn't work. Only the
+    /// mic-permission callback passes `overridesMicWarning: true`.
+    private func setStatus(
+        _ title: String,
+        enabled: Bool = false,
+        action: Selector? = nil,
+        overridesMicWarning: Bool = false
+    ) {
+        guard overridesMicWarning || !micAccessDenied else { return }
+        recordItem.title = title
+        recordItem.isEnabled = enabled
+        recordItem.action = action
+        if let menu = statusItem.menu, !menu.items.contains(recordItem) {
+            // Anchored off hotkeyItem's live index rather than a hardcoded
+            // literal, so this can't silently drift if an item is ever
+            // inserted/removed above this point in the menu construction.
+            // Layout is: title, hotkeyItem, separator, [recordItem here].
+            let anchor = menu.items.firstIndex(of: hotkeyItem).map { $0 + 2 } ?? menu.items.count
+            menu.insertItem(recordItem, at: min(anchor, menu.items.count))
+        }
+    }
+
+    /// Sets the hotkey status subtitle (parenthetical, directly under the
+    /// app name — see menu construction above).
+    private func setHotkeyStatus(_ text: String) {
+        hotkeyItem.title = "(\(text))"
+    }
+
+    /// Removes the status item once there's nothing to report — dictation is
+    /// ready and available via the push-to-talk hotkey. Never clears a
+    /// mic-access-denied warning (see setStatus) — that's sticky for the
+    /// rest of the run.
+    private func clearStatus() {
+        guard !micAccessDenied else { return }
+        if let menu = statusItem.menu, menu.items.contains(recordItem) {
+            menu.removeItem(recordItem)
+        }
+    }
+
     private func loadEngine() {
         guard let path = models.activeModelPath() else {
-            recordItem.title = "Downloading model…"
-            recordItem.isEnabled = false
+            setStatus("Downloading model…")
             autoDownloadDefaultModel()
             return
         }
         engine = nil
-        recordItem.title = "Loading model…"
-        recordItem.isEnabled = false
+        setStatus("Loading model…")
         slog("loading model: \(path)")
         Task.detached(priority: .userInitiated) {
             do {
@@ -343,13 +396,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 slog(String(format: "model loaded in %.1fs", -start.timeIntervalSinceNow))
                 await MainActor.run { [weak self] in
                     self?.engine = engine
-                    self?.recordItem.title = "Start Test Recording"
-                    self?.recordItem.isEnabled = true
+                    self?.clearStatus()
                 }
             } catch {
                 slog("model load FAILED: \(error)")
                 await MainActor.run { [weak self] in
-                    self?.recordItem.title = "Model load failed"
+                    self?.setStatus("Model load failed")
                 }
             }
         }
@@ -357,6 +409,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openRules() {
         NSWorkspace.shared.open(postProcessor.userRulesURL)
+    }
+
+    // Routed through our own selector rather than #selector(NSApplication.terminate(_:))
+    // directly: AppKit auto-attaches a small quit glyph to menu items whose action is
+    // exactly `terminate:` in status-bar menus, which was the only item with an icon
+    // and threw off the menu's left alignment. This is functionally identical —
+    // NSApp.terminate(nil) is what terminate(_:) calls anyway — but avoids the glyph.
+    @objc private func quit() {
+        NSApp.terminate(nil)
     }
 
     @objc private func showHelp() {
@@ -487,7 +548,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkey.key = choice
         choice.save()
         sender.menu?.items.forEach { $0.state = ($0 == sender) ? .on : .off }
-        hotkeyItem.title = "Hotkey: hold \(choice.title) to dictate"
+        setHotkeyStatus("hold \(choice.title) to dictate")
         toast.show("Push-to-talk key is now \(choice.title)")
     }
 
@@ -501,7 +562,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             hotkeyGranted()
         } else {
             slog("accessibility not granted yet — polling")
-            hotkeyItem.title = "Hotkey: grant Accessibility in System Settings"
+            setHotkeyStatus("grant Accessibility in System Settings")
             axPollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -517,7 +578,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func hotkeyGranted() {
         slog("event tap active")
-        hotkeyItem.title = "Hotkey: hold \(hotkey.key.title) to dictate"
+        setHotkeyStatus("hold \(hotkey.key.title) to dictate")
     }
 
     private func pttPressed() {
@@ -588,33 +649,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Menu bar icon stays static: the overlay waveform (and the system mic pill)
     // are the recording indicators — a third one was visual noise.
 
-    // MARK: - Test recording via menu (kept until M1.6)
-
-    @objc private func toggleTestRecording() {
-        if recorder.isRecording {
-            let samples = recorder.stop()
-            recordItem.title = "Transcribing…"
-            recordItem.isEnabled = false
-            guard let engine else { return }
-            Task.detached(priority: .userInitiated) { [weak self] in
-                let text = (try? engine.transcribe(samples: samples)) ?? "(transcription failed)"
-                await MainActor.run {
-                    let pasteboard = NSPasteboard.general
-                    pasteboard.clearContents()
-                    pasteboard.setString(text, forType: .string)
-                    self?.recordItem.title = "Start Test Recording"
-                    self?.recordItem.isEnabled = true
-                }
-            }
-        } else {
-            do {
-                try recorder.start()
-                recordItem.title = "Stop → Transcribe → Clipboard"
-                slog("recording started")
-            } catch {
-                slog("recorder.start FAILED: \(error)")
-                recordItem.title = "Mic failed — click to retry"
-            }
+    @objc private func showAbout() {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Susurro"
+        let versionLine = build.map { "Version \(version) (\($0))" } ?? "Version \(version)"
+        alert.informativeText = "\(versionLine)\nMatthew Twomey"
+        // NSAlert's default icon falls back to a generic placeholder for
+        // .accessory-policy (menu-bar-only, no Dock tile) apps like this one
+        // — NSApp.applicationIconImage doesn't reliably resolve without a
+        // Dock presence. Load the bundled icon directly instead.
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL) {
+            alert.icon = icon
         }
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 }

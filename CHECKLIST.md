@@ -38,6 +38,17 @@ automated: real apps, real permissions, real hardware events.
 - [ ] AI Cleanup on: long dictation cleaned; short dictation instant; off: raw
 - [ ] Start at Login on → reboot → Susurro present and working
 - [ ] Help… window opens, and its content matches the current menu items
+- [ ] Fresh launch: menu briefly shows "Loading model…" (or "Downloading
+      model…" on first run), then that item disappears once the model is
+      ready — no lingering "Start Test Recording" item
+- [ ] Revoke Microphone permission, relaunch: menu shows "Mic access denied
+      — click to open Settings"; clicking opens System Settings
+- [ ] Same, but with the active model already downloaded (fast load): the
+      mic-denied message must still be showing a few seconds after launch —
+      it must not get silently replaced/cleared once the model finishes
+      loading (the model-status and mic-denied warning share one menu slot)
+- [ ] About Susurro (bottom of menu, under its own divider) shows the
+      correct installed version number
 
 ## Smart Spacing (opt-in, default off)
 
