@@ -460,7 +460,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             dictationMemory.clear()
         }
         toast.show(smartSpacingEnabled
-            ? "Smart Spacing on — dictating again right after a . ! or ? adds a space"
+            ? "Smart Spacing on — dictating again adds a space, unless one's already there"
             : "Smart Spacing off")
     }
 

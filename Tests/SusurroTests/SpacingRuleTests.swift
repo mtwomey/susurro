@@ -2,49 +2,45 @@ import Testing
 @testable import SusurroCore
 
 @Suite struct SpacingRuleTests {
-    @Test func periodTriggersSpace() {
-        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "done.") == true)
+    @Test func endsInLetterTriggersSpace() {
+        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "hello") == true)
     }
 
-    @Test func exclamationAndQuestionTriggerSpace() {
+    @Test func endsInDigitTriggersSpace() {
+        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "item 3") == true)
+    }
+
+    @Test func endsInCommaTriggersSpace() {
+        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "wait,") == true)
+    }
+
+    @Test func endsInSentencePunctuationTriggersSpace() {
+        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "done.") == true)
         #expect(SpacingRule.needsLeadingSpace(beforeCursor: "really!") == true)
         #expect(SpacingRule.needsLeadingSpace(beforeCursor: "really?") == true)
     }
 
-    @Test func letterOrDigitDoesNotTriggerSpace() {
-        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "hello") == false)
-        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "item 3") == false)
+    @Test func endsInClosingQuoteOrParenTriggersSpace() {
+        // No longer conditioned on what's behind the wrapper — resuming a
+        // dictation always wants a word-boundary space.
+        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "she said \"hello\"") == true)
+        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "(see above)") == true)
     }
 
-    @Test func commaDoesNotTriggerSpace() {
-        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "wait,") == false)
+    @Test func trailingSpaceDoesNotDoubleUp() {
+        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "done. ") == false)
     }
 
-    @Test func closingQuoteAfterSentenceEnderTriggersSpace() {
-        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "she said \"done.\"") == true)
-        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "she asked \u{201C}really?\u{201D}") == true)
-    }
-
-    @Test func closingParenAfterSentenceEnderTriggersSpace() {
-        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "(see above.)") == true)
-    }
-
-    @Test func closingWrapperWithoutSentenceEnderDoesNotTrigger() {
-        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "(see above)") == false)
-        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "she said \"hello\"") == false)
-    }
-
-    @Test func trailingSpaceIsIgnoredNotDoubled() {
-        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "done. ") == true)
-    }
-
-    @Test func trailingNewlineIsIgnored() {
-        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "done.\n") == true)
-        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "done.\n\n") == true)
+    @Test func trailingNewlineDoesNotTrigger() {
+        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "done.\n") == false)
+        #expect(SpacingRule.needsLeadingSpace(beforeCursor: "line one\n\n") == false)
     }
 
     @Test func onlyWhitespaceYieldsNoSpace() {
         #expect(SpacingRule.needsLeadingSpace(beforeCursor: "   ") == false)
+    }
+
+    @Test func emptyTailYieldsNoSpace() {
         #expect(SpacingRule.needsLeadingSpace(beforeCursor: "") == false)
     }
 
