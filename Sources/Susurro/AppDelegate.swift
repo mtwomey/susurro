@@ -563,13 +563,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                    ) {
                     text = " " + text
                 }
-                TextInjector.type(text)
-                if !secureInputActive, let frontmostPID {
+                let typed = TextInjector.type(text)
+                if !secureInputActive, typed, let frontmostPID {
                     self.dictationMemory.recordTyped(text, intoPID: frontmostPID)
                 } else {
-                    // Nothing was actually typed (secure input blocked it) or we
-                    // couldn't identify the frontmost app — don't let a stale
-                    // tail leak into whatever's focused next.
+                    // Nothing was actually typed (secure input blocked it, a
+                    // keystroke event failed to post, or we couldn't identify
+                    // the frontmost app) — don't let a stale tail leak into
+                    // whatever's focused next.
                     self.dictationMemory.clear()
                 }
                 if self.copyToClipboard || secureInputActive {
