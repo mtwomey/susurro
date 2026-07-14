@@ -38,6 +38,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         get { UserDefaults.standard.bool(forKey: "copyToClipboard") } // default off
         set { UserDefaults.standard.set(newValue, forKey: "copyToClipboard") }
     }
+    private var smartSpacingEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "smartSpacingEnabled") } // default off
+        set { UserDefaults.standard.set(newValue, forKey: "smartSpacingEnabled") }
+    }
     private let hotkey = HotkeyMonitor()
     private var engine: WhisperEngine?
     private var axPollTimer: Timer?
@@ -119,6 +123,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         clipboardItem.target = self
         clipboardItem.state = copyToClipboard ? .on : .off
         menu.addItem(clipboardItem)
+
+        let smartSpacingItem = NSMenuItem(
+            title: "Smart Spacing",
+            action: #selector(toggleSmartSpacing(_:)),
+            keyEquivalent: ""
+        )
+        smartSpacingItem.target = self
+        smartSpacingItem.state = smartSpacingEnabled ? .on : .off
+        menu.addItem(smartSpacingItem)
 
         let loginItem = NSMenuItem(
             title: "Start at Login",
@@ -438,6 +451,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             : "Clipboard untouched (except in password fields, where typing is blocked)")
     }
 
+    @objc private func toggleSmartSpacing(_ sender: NSMenuItem) {
+        smartSpacingEnabled.toggle()
+        sender.state = smartSpacingEnabled ? .on : .off
+        toast.show(smartSpacingEnabled
+            ? "Smart Spacing on — a space is added if you keep dictating after a . ! or ?"
+            : "Smart Spacing off")
+    }
+
     @objc private func toggleLoginItem(_ sender: NSMenuItem) {
         do {
             if SMAppService.mainApp.status == .enabled {
@@ -527,6 +548,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // Secure input (password fields) silently blocks synthetic typing —
                 // in that case copy regardless of the setting so the words aren't lost.
                 let secureInputActive = IsSecureEventInputEnabled()
+                // Smart Spacing: never even read Accessibility state while a
+                // secure field is focused, as a defense-in-depth privacy
+                // guard on top of the AX layer's own field masking.
+                if !secureInputActive, self.smartSpacingEnabled,
+                   SpacingRule.needsLeadingSpace(beforeCursor: FocusedFieldInspector.textBeforeCursor()) {
+                    text = " " + text
+                }
                 TextInjector.type(text)
                 if self.copyToClipboard || secureInputActive {
                     let pasteboard = NSPasteboard.general

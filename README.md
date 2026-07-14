@@ -60,6 +60,9 @@ Access, or edit `SIGN_ID` in the Makefile.
 - **Push-to-talk key**: menu → **Push-to-Talk Key**
 - **Models**: menu → **Model**; downloads go to
   `~/Library/Application Support/Susurro/models`
+- **Smart Spacing** (off by default): menu → **Smart Spacing**. When on,
+  dictating again into a field that already ends in `.`, `!`, or `?` adds a
+  leading space so back-to-back dictations don't run together.
 
 ## Notes
 
