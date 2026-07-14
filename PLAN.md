@@ -145,7 +145,10 @@ Findings on macOS 26.5:
    syllable on every dictation. Fails the <50 ms criterion.
 Verdict: AVAudioEngine + mic pill is the correct production configuration. Revisit only
 if Apple changes indicator policy or adds a first-class low-latency audio-only tap.
-Debug hook from this investigation: `kill -USR1 <pid>` toggles recording.
+Debug hook from this investigation: `kill -USR1 <pid>` toggled recording.
+(Removed later — see the "menu cleanup" PR — since it only exercised the
+test-recording clipboard path, not the production PTT flow. This line is
+kept as a historical record of how the finding above was measured.)
 
 ## v2 parking lot
 

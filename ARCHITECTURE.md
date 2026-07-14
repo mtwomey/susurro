@@ -57,7 +57,7 @@ Sources/
     main.swift                NSApplication bootstrap, .accessory activation policy
     AppDelegate.swift         CENTRAL COORDINATOR: menu construction, permission flows,
                               model menu, PTT wiring, dictation pipeline assembly,
-                              SIGUSR1 debug hook, notifications
+                              notifications
     HotkeyMonitor.swift       CGEventTap; PTTKey = modifier (flagsChanged) or regular
                               key (keyDown/up, swallowed); auto re-enables disabled taps
     TextInjector.swift        CGEvent unicode typing, 18-UTF16-unit chunks, Return for
@@ -178,7 +178,6 @@ with `activeModelPath()` (nil = genuinely no model) when messaging users.
 
 ## Debug affordances
 
-- `kill -USR1 <pid>` toggles recording (scripted testing without a human).
 - Run `./build/Susurro.app/Contents/MacOS/Susurro` directly from a terminal to
   see stderr logs (via `open`/LaunchServices, NSLog content is TCC-redacted in
   `log show`).

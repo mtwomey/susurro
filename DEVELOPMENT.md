@@ -79,8 +79,6 @@ permission re-grants after rebuilds.
 - Terminal launch shows live logs: `./build/Susurro.app/Contents/MacOS/Susurro`
   (all app logs use the `[susurro]` NSLog prefix; via `log show` the content is
   privacy-redacted, so prefer direct launch).
-- `kill -USR1 $(pgrep -x Susurro)` toggles recording — scripted end-to-end
-  tests without touching the hotkey.
 - Watch permission attribution: `log stream --predicate 'process == "tccd"'`.
 - Control Center indicator decisions: subsystem `com.apple.cameracapture`
   in ControlCenter's log (see PLAN.md mic-pill investigation for the method).
