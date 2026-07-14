@@ -94,8 +94,8 @@ final class HelpWindowController {
         heading("Smart Spacing")
         body("""
         Off by default. When checked, dictating again right after Susurro \
-        typed a sentence ending in . ! or ? adds a leading space, so \
-        back-to-back dictations into the same field don't run together. \
+        typed something adds a leading space (unless one's already there), \
+        so back-to-back dictations into the same field don't run together. \
         Susurro tracks this itself — it doesn't read the field's contents — \
         so it only applies if you haven't switched to a different app since \
         your last dictation, and it won't notice text you typed by hand in \

@@ -11,31 +11,38 @@
 > "Pivot" section below explains why, and "Historical: AX-based design (superseded)"
 > preserves the abandoned design for the reasoning, per this repo's usual
 > practice of keeping rejected-alternative writeups (see `PLAN.md`).
+>
+> The trigger condition was later broadened past the original "ends in
+> `.`/`!`/`?`" spec — see "Revision: broadened trigger condition" below —
+> after review turned up that the sentence-ender gate missed the more common
+> case (resuming mid-sentence, with no ending punctuation at all).
 
 ## Problem
 
 Susurro is stateless across dictations: it has no idea what's already in the
-focused text field. Dictate a sentence, release the hotkey, click back into
-the same field a moment later and dictate again — if the cursor sits right
-after a period from the previous dictation, the new text is typed with no
-separating space: `...done.Next thought...` instead of
-`...done. Next thought...`.
+focused text field. Dictate something, release the hotkey, click back into
+the same field a moment later and dictate again — the new text is typed with
+no separating space, e.g. `...done.Next thought...` instead of
+`...done. Next thought...`, or, just as often, `...the lightand go
+straight...` after pausing mid-sentence with no ending punctuation at all.
 
 ## Behavior
 
-On hotkey release, before typing the new transcript: if the tail of the text
-Susurro itself last typed — into the same app that's still frontmost — ends
-(ignoring trailing whitespace/newlines) in `.`, `!`, or `?` — optionally
-followed by a closing quote or paren (`"`, `'`, `)`, `”`, `’`) — prepend a
-single space to the transcript before typing it.
+On hotkey release, before typing the new transcript: if Susurro itself typed
+something into the same app that's still frontmost, and that text doesn't
+already end in whitespace, prepend a single space to the new transcript
+before typing it. Resuming a dictation always wants a word-boundary space —
+you're never picking up mid-word — so there's no need to condition this on
+*what* the previous text ended with, only on whether a space is already
+there.
 
 Decisions locked in:
 
 | Question | Decision |
 |---|---|
-| Trigger punctuation | `.` `!` `?` (plus a trailing closing quote/paren after one of those) |
-| Trailing whitespace/newlines already typed | Skipped — check the last *non-whitespace* character, not the literal last character |
-| Mechanism | Self-tracking: Susurro remembers the tail of what *it* last typed and which app (pid) it typed into — **not** a read of the field's live contents |
+| Trigger condition | Any resumed dictation into the same still-frontmost app, unless the last-typed text already ends in whitespace |
+| Trailing whitespace/newlines already typed | Checked directly — if the literal last character is whitespace, skip adding another (avoids doubling a space, or adding one right after a newline) |
+| Mechanism | Self-tracking: Susurro remembers the last character of what *it* last typed and which app (pid) it typed into — **not** a read of the field's live contents |
 | Memory invalid (different app now frontmost, nothing typed yet this session, secure field last time) | Silently do nothing — behaves exactly like today, never blocks or errors |
 | Rollout | Opt-in menu toggle, **default off** — "Smart Spacing", same pattern as "Copy Transcript to Clipboard" |
 
@@ -114,9 +121,11 @@ public enum SpacingRule {
 }
 ```
 
-`tail` is the raw text immediately before where the cursor *was*, untrimmed;
-the function strips trailing whitespace/newlines itself, then checks for a
-sentence-ender or a closing quote/paren behind one.
+`tail` is the last character Susurro itself typed immediately before where
+the cursor *was*. The function returns `true` unless `tail` is `nil`/empty
+or its last character is already whitespace — see "Revision: broadened
+trigger condition" below for why this isn't conditioned on sentence-ending
+punctuation anymore.
 
 **`AppDelegate.swift` wiring** — in `pttReleased`'s `MainActor.run` block,
 immediately before `TextInjector.type(text)`:
@@ -142,12 +151,13 @@ it and a toast on flip (which also clears `dictationMemory` when turned off).
 ## Testing
 
 - **Unit tests** (`Tests/SusurroTests`):
-  - `SpacingRuleTests.swift` — table-driven over `.`, `!`, `?`, closing
-    quote/paren combinations, letters, digits, commas, whitespace, nil.
+  - `SpacingRuleTests.swift` — letters, digits, commas, sentence-ending
+    punctuation, and closing quote/paren all trigger a space now; trailing
+    space/newline, empty, and nil all correctly don't.
   - `DictationMemoryTests.swift` — recorded tail returned for a matching
-    pid, hidden for a different pid, cleared explicitly, short text handled,
-    re-recording overwrites the previous entry. Fully mockable (`pid_t` +
-    `String` only), no AX/AppKit involved.
+    pid, hidden for a different pid, cleared explicitly, single-character
+    text handled, re-recording overwrites the previous entry. Fully
+    mockable (`pid_t` + `String` only), no AX/AppKit involved.
 - **Manual acceptance** (`CHECKLIST.md` — "Smart Spacing" section): app
   switching resets the memory, works identically across TextEdit/Electron/
   Terminal/browser (the whole point of the redesign), manual edits between
@@ -165,6 +175,42 @@ it and a toast on flip (which also clears `dictationMemory` when turned off).
 - Not scoped to fix multi-space accumulation from *pre-existing* trailing
   whitespace the user typed manually — the whitespace-trim only affects this
   feature's own decision, it does not rewrite the field's existing content.
+
+## Revision: broadened trigger condition
+
+The original spec (see "Problem" and the first `Behavior` decision table
+above, as originally written) only added a space when the previous typed
+text ended in `.`, `!`, or `?` (optionally behind a closing quote/paren).
+That was scoped directly from the motivating example — finishing a
+sentence, then dictating the next one — and never considered the more
+common case: pausing *mid-sentence*, with no ending punctuation, and
+resuming a moment later. Under the original rule that case got no help at
+all (`the light` + `and go straight` → `the lightand go straight`, glued
+together, feature on or off), which is arguably a bigger real-world gap than
+the one this feature originally set out to fix — a push-to-talk user is
+essentially never picking up in the middle of a word, so *any* resumed
+dictation wants a word-boundary space, not just one after a finished
+sentence.
+
+Revised rule: add a leading space whenever resuming into the same
+still-frontmost app, unless the last-typed text already ends in whitespace.
+This drops the sentence-ender/closing-wrapper check in `SpacingRule`
+entirely — checking only whether the last character is whitespace covers
+both "don't double an existing space" and "don't add a stray leading space
+right after a newline."
+
+One risk considered and ruled out: whether this could cause double spaces
+if previously-typed text already ended in whitespace. It can't, in
+practice — `PostProcessor.process()` already runs
+`.trimmingCharacters(in: .whitespacesAndNewlines)` on the full transcript by
+default (`normalizeWhitespace: true` in `rules.json`), so what actually gets
+typed essentially never ends in trailing whitespace already. The
+whitespace check in `SpacingRule` is kept anyway as a defensive guard for
+anyone who disables `normalizeWhitespace` in a custom `rules.json`.
+
+`DictationMemory`'s `contextLength` was reduced from 8 to 1 accordingly —
+`SpacingRule` only ever looks at the single character immediately before the
+cursor now, so there's no reason to retain more.
 
 ---
 

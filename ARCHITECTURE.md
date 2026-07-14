@@ -40,11 +40,12 @@ Sources/
                               SPM Bundle.module resources DO NOT WORK in hand-assembled
                               .app bundles (crashed 0.1.0 on all non-dev machines)
     TranscriptFilter.swift    strips whisper hallucination tokens ([BLANK_AUDIO] etc.)
-    SpacingRule.swift         Smart Spacing decision logic: does the text before the cursor
-                              end (ignoring trailing whitespace) in . ! ? or one of those
-                              behind a closing quote/paren? Pure Foundation — unit-tested
-    DictationMemory.swift     Smart Spacing's state: remembers the tail of the last text
-                              Susurro itself typed and which app (pid) it typed into. No
+    SpacingRule.swift         Smart Spacing decision logic: add a leading space whenever
+                              resuming a dictation, unless the text before the cursor
+                              already ends in whitespace (avoids doubling up). Pure
+                              Foundation — unit-tested
+    DictationMemory.swift     Smart Spacing's state: remembers the last character Susurro
+                              itself typed and which app (pid) it typed into. No
                               Accessibility dependency — see SMART_SPACING_PLAN.md for why
                               an earlier AX-read design was abandoned
     TranscriptCleaner.swift   optional AI cleanup via FoundationModels (macOS 26 +
