@@ -40,6 +40,10 @@ Sources/
                               SPM Bundle.module resources DO NOT WORK in hand-assembled
                               .app bundles (crashed 0.1.0 on all non-dev machines)
     TranscriptFilter.swift    strips whisper hallucination tokens ([BLANK_AUDIO] etc.)
+    SpacingRule.swift         Smart Spacing decision logic: does the text before the cursor
+                              end (ignoring trailing whitespace) in . ! ? or one of those
+                              behind a closing quote/paren? Pure Foundation, no AX dependency —
+                              unit-tested; see SMART_SPACING_PLAN.md
     TranscriptCleaner.swift   optional AI cleanup via FoundationModels (macOS 26 +
                               Apple Intelligence); guided generation (@Generable) so the
                               model can't emit preamble; <6-word skip; sanity-check
@@ -54,6 +58,11 @@ Sources/
                               key (keyDown/up, swallowed); auto re-enables disabled taps
     TextInjector.swift        CGEvent unicode typing, 18-UTF16-unit chunks, Return for
                               newlines
+    FocusedFieldInspector.swift  Smart Spacing's AX plumbing: reads a short bounded slice of
+                              text before the system's focused-element cursor (@MainActor,
+                              timeout-guarded). First code in the repo that *reads*
+                              Accessibility state rather than only posting CGEvents; see
+                              SMART_SPACING_PLAN.md
     OverlayPanel.swift        recording pill: non-activating NSPanel (never steals
                               focus), waveform bars + timer, bottom-right
     ToastPanel.swift          transient acknowledgment toasts, top-right under menu bar
@@ -90,6 +99,9 @@ key up
         PostProcessor.process()      rules.json: punctuation words, substitutions, regex
         [TranscriptCleaner.clean()]  only if AI Cleanup toggled on; ~1s+; falls back
         → MainActor:
+            [FocusedFieldInspector]  only if Smart Spacing is on and no secure field is
+                                     focused: bounded AX read of text before the cursor;
+                                     SpacingRule decides whether to prepend a space
             TextInjector.type(text)  CGEvent posting into focused app
             [clipboard = text]       only if the "Copy Transcript to Clipboard"
                                      toggle is on (default OFF — user clipboard is
@@ -119,6 +131,7 @@ key up
 | PTT key | UserDefaults `pttKeyID` (default rightOption) |
 | AI cleanup | UserDefaults `llmCleanupEnabled` (default false) |
 | Clipboard copy | UserDefaults `copyToClipboard` (default false; secure-input auto-copy is unconditional) |
+| Smart Spacing | UserDefaults `smartSpacingEnabled` (default false) |
 | Login item | SMAppService.mainApp |
 
 Note: `activeModelID` has a value even when no model file exists — always pair
@@ -149,6 +162,13 @@ with `activeModelPath()` (nil = genuinely no model) when messaging users.
   (`GGML_METAL_EMBED_LIBRARY=ON`), OpenMP disabled (Homebrew libomp leak).
 - **Whisper hallucinates on silence** ("[BLANK_AUDIO]") — TranscriptFilter
   strips square-bracket tokens; parentheses are preserved deliberately.
+- **AX reads (FocusedFieldInspector) must be timeout-guarded and bounded.**
+  `AXUIElementCopyAttributeValue`/`...ParameterizedAttributeValue` are
+  synchronous cross-process calls; an unbounded call to a busy/hung
+  frontmost app can stall Susurro's own main runloop, which is also where
+  `HotkeyMonitor`'s CGEventTap lives. Always set
+  `AXUIElementSetMessagingTimeout` and always request a small bounded range
+  (`kAXStringForRangeParameterizedAttribute`), never the whole field value.
 - ~600 MB resident with small.en warm; scales with model choice.
 
 ## Debug affordances

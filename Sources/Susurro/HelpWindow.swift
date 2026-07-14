@@ -91,6 +91,16 @@ final class HelpWindowController {
         lost.
         """)
 
+        heading("Smart Spacing")
+        body("""
+        Off by default. When checked, dictating again into a field that \
+        already ends in a sentence-ending . ! or ? (ignoring any trailing \
+        spaces or blank lines) adds a leading space before the new \
+        transcript, so back-to-back dictations into the same field don't run \
+        together. If Susurro can't read the field's content, it does \
+        nothing — dictation always behaves exactly as it does with this off.
+        """)
+
         heading("Start at Login")
         body("""
         When checked, Susurro launches automatically when you log in.

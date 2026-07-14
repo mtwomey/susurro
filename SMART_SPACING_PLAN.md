@@ -1,8 +1,36 @@
 # Smart Spacing — feature plan
 
-> Status: **planned, not yet built.** Companion to `ARCHITECTURE.md` (as-built
-> structure) and `PLAN.md` (v1 historical design doc). This is a focused plan
-> for one v2 feature: read the parking lot in `PLAN.md` for how it was queued.
+> Status: **built**, on branch `feature/smart-spacing`. Companion to
+> `ARCHITECTURE.md` (as-built structure) and `PLAN.md` (v1 historical design
+> doc) — where this document and reality differ, they win, per this repo's
+> usual convention. See "As built" below for what changed during
+> implementation.
+
+## As built (deviations from the plan above)
+
+- **`FocusedFieldInspector.swift` lives in `Sources/Susurro`, not
+  `Sources/SusurroCore`.** All other AppKit/Accessibility/CoreGraphics
+  system-integration code (`TextInjector`, `HotkeyMonitor`) already lives in
+  the app target, not the shared core library — `SusurroCore` has no AppKit
+  dependency today, and this keeps that boundary intact. `SpacingRule` (the
+  pure decision logic) stays in `SusurroCore` as planned and is the piece
+  that's actually unit-tested.
+- **No `TextBeforeCursorProviding` protocol seam was added.** Matching the
+  existing precedent for `TextInjector`/`HotkeyMonitor` (also un-mocked,
+  verified only via `CHECKLIST.md`), `FocusedFieldInspector`'s AX plumbing is
+  exercised manually rather than through a fake-provider unit test. Only
+  `SpacingRule` has automated coverage (`Tests/SusurroTests/SpacingRuleTests.swift`).
+- **`SpacingRule.needsLeadingSpace` takes the raw multi-character tail
+  string, not a single `Character`.** The "closing quote/paren after a
+  sentence-ender" case needs to look at *two* trailing characters (the
+  wrapper, then what's behind it), so the API takes
+  `beforeCursor tail: String?` and does its own trailing-whitespace trim
+  internally, rather than the caller pre-trimming down to one `Character`.
+- **The secure-input guard is stricter than "AX read should come back
+  masked."** `AppDelegate.pttReleased` checks `IsSecureEventInputEnabled()`
+  *before* calling `FocusedFieldInspector` at all, so no AX read is even
+  attempted while a secure field is focused — belt-and-suspenders beyond
+  relying on the OS to mask the value.
 
 ## Problem
 

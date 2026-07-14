@@ -39,6 +39,26 @@ automated: real apps, real permissions, real hardware events.
 - [ ] Start at Login on → reboot → Susurro present and working
 - [ ] Help… window opens, and its content matches the current menu items
 
+## Smart Spacing (opt-in, default off)
+
+- [ ] Toggle on: dictate into a field, click back in after a period, dictate
+      again — a space appears before the new text
+- [ ] Same, but field ends in `!` / `?` / `."` (closing quote/paren after
+      the sentence-ender) — space appears
+- [ ] Field ends in a letter, digit, or comma — no extra space
+- [ ] Field ends in `. ` (trailing space) or a blank line after `.` — no
+      *double* space; still triggers correctly once
+- [ ] Toggle off (default): no behavior change at all vs. today
+- [ ] Dictate into an app with poor/no Accessibility support (e.g. some
+      Electron apps, Terminal) — no crash, no space, silent no-op
+- [ ] Dictate mid-IME-composition (e.g. a Pinyin/Kana candidate window open)
+      — no crash, no space
+- [ ] Dictate into a rich text / contenteditable area in both Chrome and
+      Safari — same behavior in both
+- [ ] Dictate into a fresh empty field — no space (nothing before cursor)
+- [ ] Password field — unaffected; typing still blocked/copied as before,
+      and no perceptible delay from an Accessibility read being attempted
+
 ## Fresh-machine install (before sharing)
 
 - [ ] New user account: install per README, reach working dictation without terminal
