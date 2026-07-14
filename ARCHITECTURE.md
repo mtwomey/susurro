@@ -40,6 +40,13 @@ Sources/
                               SPM Bundle.module resources DO NOT WORK in hand-assembled
                               .app bundles (crashed 0.1.0 on all non-dev machines)
     TranscriptFilter.swift    strips whisper hallucination tokens ([BLANK_AUDIO] etc.)
+    SpacingRule.swift         Smart Spacing decision logic: does the text before the cursor
+                              end (ignoring trailing whitespace) in . ! ? or one of those
+                              behind a closing quote/paren? Pure Foundation — unit-tested
+    DictationMemory.swift     Smart Spacing's state: remembers the tail of the last text
+                              Susurro itself typed and which app (pid) it typed into. No
+                              Accessibility dependency — see SMART_SPACING_PLAN.md for why
+                              an earlier AX-read design was abandoned
     TranscriptCleaner.swift   optional AI cleanup via FoundationModels (macOS 26 +
                               Apple Intelligence); guided generation (@Generable) so the
                               model can't emit preamble; <6-word skip; sanity-check
@@ -90,7 +97,13 @@ key up
         PostProcessor.process()      rules.json: punctuation words, substitutions, regex
         [TranscriptCleaner.clean()]  only if AI Cleanup toggled on; ~1s+; falls back
         → MainActor:
+            [DictationMemory]        only if Smart Spacing is on and no secure field is
+                                     focused: SpacingRule checks the tail Susurro itself
+                                     last typed into this same frontmost app (pid match),
+                                     decides whether to prepend a space
             TextInjector.type(text)  CGEvent posting into focused app
+            DictationMemory.record   remembers this text's tail + frontmost pid for the
+                                     next dictation (or clears it if nothing was typed)
             [clipboard = text]       only if the "Copy Transcript to Clipboard"
                                      toggle is on (default OFF — user clipboard is
                                      sacred), OR IsSecureEventInputEnabled() is true
@@ -119,6 +132,7 @@ key up
 | PTT key | UserDefaults `pttKeyID` (default rightOption) |
 | AI cleanup | UserDefaults `llmCleanupEnabled` (default false) |
 | Clipboard copy | UserDefaults `copyToClipboard` (default false; secure-input auto-copy is unconditional) |
+| Smart Spacing | UserDefaults `smartSpacingEnabled` (default false) |
 | Login item | SMAppService.mainApp |
 
 Note: `activeModelID` has a value even when no model file exists — always pair
@@ -149,6 +163,16 @@ with `activeModelPath()` (nil = genuinely no model) when messaging users.
   (`GGML_METAL_EMBED_LIBRARY=ON`), OpenMP disabled (Homebrew libomp leak).
 - **Whisper hallucinates on silence** ("[BLANK_AUDIO]") — TranscriptFilter
   strips square-bracket tokens; parentheses are preserved deliberately.
+- **Reading a focused field's content via Accessibility does not generalize
+  across apps.** `kAXSelectedTextRangeAttribute` (cursor position) is only
+  reliably implemented by native Cocoa text views. Electron apps and
+  Chromium/WebKit web content expose cursor position via a different,
+  non-standard mechanism (`AXTextMarkerRange`); Terminal's custom-drawn text
+  view doesn't expose per-character selection via AX at all. An
+  AX-read-based Smart Spacing design was built, tested, and abandoned for
+  this reason (empirically: it worked in TextEdit, silently did nothing in
+  Claude desktop/Terminal/browser fields) in favor of `DictationMemory`
+  self-tracking what Susurro itself typed. See SMART_SPACING_PLAN.md.
 - ~600 MB resident with small.en warm; scales with model choice.
 
 ## Debug affordances
