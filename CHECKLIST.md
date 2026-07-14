@@ -38,6 +38,13 @@ automated: real apps, real permissions, real hardware events.
 - [ ] AI Cleanup on: long dictation cleaned; short dictation instant; off: raw
 - [ ] Start at Login on → reboot → Susurro present and working
 - [ ] Help… window opens, and its content matches the current menu items
+- [ ] Fresh launch: menu briefly shows "Loading model…" (or "Downloading
+      model…" on first run), then that item disappears once the model is
+      ready — no lingering "Start Test Recording" item
+- [ ] Revoke Microphone permission, relaunch: menu shows "Mic access denied
+      — click to open Settings"; clicking opens System Settings
+- [ ] About Susurro (bottom of menu, under its own divider) shows the
+      correct installed version number
 
 ## Smart Spacing (opt-in, default off)
 
