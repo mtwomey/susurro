@@ -39,6 +39,34 @@ automated: real apps, real permissions, real hardware events.
 - [ ] Start at Login on → reboot → Susurro present and working
 - [ ] Help… window opens, and its content matches the current menu items
 
+## Smart Spacing (opt-in, default off)
+
+Self-tracked (Susurro remembers what *it* typed and where — no field read).
+See SMART_SPACING_PLAN.md for why an earlier Accessibility-based design was
+abandoned (it silently did nothing in Electron apps, browsers, and Terminal).
+
+- [ ] Toggle on: dictate a sentence ending in `.`, then dictate again into
+      the same field without switching apps — a space appears before the
+      new text
+- [ ] Same, ending in `!` or `?` — space appears
+- [ ] Dictate a sentence ending in a letter, digit, or comma, then dictate
+      again — no extra space
+- [ ] Toggle off (default): no behavior change at all vs. today
+- [ ] Works the same in TextEdit/Notes, in an Electron app (Slack, VS Code,
+      or this app itself), in Terminal, and in a browser text field — this
+      is the whole point of the self-tracking redesign; regressions here are
+      the highest-priority thing to catch
+- [ ] Dictate, then switch to a different app, then switch back and dictate
+      again — no space (memory resets on app switch, as designed)
+- [ ] Dictate, then manually type or delete characters by hand, then dictate
+      again — Susurro won't notice the manual edit (documented limitation,
+      not a bug); confirm this doesn't crash or misbehave, just doesn't
+      account for the hand-typed change
+- [ ] First dictation after launch (nothing typed yet this session) — no
+      space, no crash
+- [ ] Password field — unaffected; typing still blocked/copied as before,
+      and the memory is cleared rather than recording secure-field content
+
 ## Fresh-machine install (before sharing)
 
 - [ ] New user account: install per README, reach working dictation without terminal
