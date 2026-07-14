@@ -42,8 +42,11 @@ Sources/
     TranscriptFilter.swift    strips whisper hallucination tokens ([BLANK_AUDIO] etc.)
     SpacingRule.swift         Smart Spacing decision logic: does the text before the cursor
                               end (ignoring trailing whitespace) in . ! ? or one of those
-                              behind a closing quote/paren? Pure Foundation, no AX dependency —
-                              unit-tested; see SMART_SPACING_PLAN.md
+                              behind a closing quote/paren? Pure Foundation — unit-tested
+    DictationMemory.swift     Smart Spacing's state: remembers the tail of the last text
+                              Susurro itself typed and which app (pid) it typed into. No
+                              Accessibility dependency — see SMART_SPACING_PLAN.md for why
+                              an earlier AX-read design was abandoned
     TranscriptCleaner.swift   optional AI cleanup via FoundationModels (macOS 26 +
                               Apple Intelligence); guided generation (@Generable) so the
                               model can't emit preamble; <6-word skip; sanity-check
@@ -58,11 +61,6 @@ Sources/
                               key (keyDown/up, swallowed); auto re-enables disabled taps
     TextInjector.swift        CGEvent unicode typing, 18-UTF16-unit chunks, Return for
                               newlines
-    FocusedFieldInspector.swift  Smart Spacing's AX plumbing: reads a short bounded slice of
-                              text before the system's focused-element cursor (@MainActor,
-                              timeout-guarded). First code in the repo that *reads*
-                              Accessibility state rather than only posting CGEvents; see
-                              SMART_SPACING_PLAN.md
     OverlayPanel.swift        recording pill: non-activating NSPanel (never steals
                               focus), waveform bars + timer, bottom-right
     ToastPanel.swift          transient acknowledgment toasts, top-right under menu bar
@@ -99,10 +97,13 @@ key up
         PostProcessor.process()      rules.json: punctuation words, substitutions, regex
         [TranscriptCleaner.clean()]  only if AI Cleanup toggled on; ~1s+; falls back
         → MainActor:
-            [FocusedFieldInspector]  only if Smart Spacing is on and no secure field is
-                                     focused: bounded AX read of text before the cursor;
-                                     SpacingRule decides whether to prepend a space
+            [DictationMemory]        only if Smart Spacing is on and no secure field is
+                                     focused: SpacingRule checks the tail Susurro itself
+                                     last typed into this same frontmost app (pid match),
+                                     decides whether to prepend a space
             TextInjector.type(text)  CGEvent posting into focused app
+            DictationMemory.record   remembers this text's tail + frontmost pid for the
+                                     next dictation (or clears it if nothing was typed)
             [clipboard = text]       only if the "Copy Transcript to Clipboard"
                                      toggle is on (default OFF — user clipboard is
                                      sacred), OR IsSecureEventInputEnabled() is true
@@ -162,13 +163,16 @@ with `activeModelPath()` (nil = genuinely no model) when messaging users.
   (`GGML_METAL_EMBED_LIBRARY=ON`), OpenMP disabled (Homebrew libomp leak).
 - **Whisper hallucinates on silence** ("[BLANK_AUDIO]") — TranscriptFilter
   strips square-bracket tokens; parentheses are preserved deliberately.
-- **AX reads (FocusedFieldInspector) must be timeout-guarded and bounded.**
-  `AXUIElementCopyAttributeValue`/`...ParameterizedAttributeValue` are
-  synchronous cross-process calls; an unbounded call to a busy/hung
-  frontmost app can stall Susurro's own main runloop, which is also where
-  `HotkeyMonitor`'s CGEventTap lives. Always set
-  `AXUIElementSetMessagingTimeout` and always request a small bounded range
-  (`kAXStringForRangeParameterizedAttribute`), never the whole field value.
+- **Reading a focused field's content via Accessibility does not generalize
+  across apps.** `kAXSelectedTextRangeAttribute` (cursor position) is only
+  reliably implemented by native Cocoa text views. Electron apps and
+  Chromium/WebKit web content expose cursor position via a different,
+  non-standard mechanism (`AXTextMarkerRange`); Terminal's custom-drawn text
+  view doesn't expose per-character selection via AX at all. An
+  AX-read-based Smart Spacing design was built, tested, and abandoned for
+  this reason (empirically: it worked in TextEdit, silently did nothing in
+  Claude desktop/Terminal/browser fields) in favor of `DictationMemory`
+  self-tracking what Susurro itself typed. See SMART_SPACING_PLAN.md.
 - ~600 MB resident with small.en warm; scales with model choice.
 
 ## Debug affordances

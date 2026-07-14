@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         get { UserDefaults.standard.bool(forKey: "smartSpacingEnabled") } // default off
         set { UserDefaults.standard.set(newValue, forKey: "smartSpacingEnabled") }
     }
+    // Self-tracking, not an Accessibility read — see SMART_SPACING_PLAN.md.
+    private var dictationMemory = DictationMemory()
     private let hotkey = HotkeyMonitor()
     private var engine: WhisperEngine?
     private var axPollTimer: Timer?
@@ -454,8 +456,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleSmartSpacing(_ sender: NSMenuItem) {
         smartSpacingEnabled.toggle()
         sender.state = smartSpacingEnabled ? .on : .off
+        if !smartSpacingEnabled {
+            dictationMemory.clear()
+        }
         toast.show(smartSpacingEnabled
-            ? "Smart Spacing on — a space is added if you keep dictating after a . ! or ?"
+            ? "Smart Spacing on — dictating again right after a . ! or ? adds a space"
             : "Smart Spacing off")
     }
 
@@ -548,14 +553,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // Secure input (password fields) silently blocks synthetic typing —
                 // in that case copy regardless of the setting so the words aren't lost.
                 let secureInputActive = IsSecureEventInputEnabled()
-                // Smart Spacing: never even read Accessibility state while a
-                // secure field is focused, as a defense-in-depth privacy
-                // guard on top of the AX layer's own field masking.
-                if !secureInputActive, self.smartSpacingEnabled,
-                   SpacingRule.needsLeadingSpace(beforeCursor: FocusedFieldInspector.textBeforeCursor()) {
+                let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                // Smart Spacing: self-tracked, not an Accessibility read (see
+                // SMART_SPACING_PLAN.md) — only fires if Susurro itself typed
+                // into this same frontmost app last time.
+                if !secureInputActive, self.smartSpacingEnabled, let frontmostPID,
+                   SpacingRule.needsLeadingSpace(
+                       beforeCursor: self.dictationMemory.tailIfStillFocused(pid: frontmostPID)
+                   ) {
                     text = " " + text
                 }
                 TextInjector.type(text)
+                if !secureInputActive, let frontmostPID {
+                    self.dictationMemory.recordTyped(text, intoPID: frontmostPID)
+                } else {
+                    // Nothing was actually typed (secure input blocked it) or we
+                    // couldn't identify the frontmost app — don't let a stale
+                    // tail leak into whatever's focused next.
+                    self.dictationMemory.clear()
+                }
                 if self.copyToClipboard || secureInputActive {
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
