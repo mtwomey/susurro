@@ -16,7 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotkeyItem: NSMenuItem!
 
     // Production capture: AVAudioEngine. Alternatives evaluated and documented in
-    // PLAN.md ("mic-mode pill"): HALAudioRecorder (raw CoreAudio — still pills),
+    // docs/PLAN.md ("mic-mode pill"): HALAudioRecorder (raw CoreAudio — still pills),
     // SCKAudioRecorder (ScreenCaptureKit — no mic pill, but screen-recording pill,
     // Screen Recording permission, and 75–160 ms capture-start dead air).
     private let recorder = AudioRecorder()
@@ -42,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         get { UserDefaults.standard.bool(forKey: "smartSpacingEnabled") } // default off
         set { UserDefaults.standard.set(newValue, forKey: "smartSpacingEnabled") }
     }
-    // Self-tracking, not an Accessibility read — see SMART_SPACING_PLAN.md.
+    // Self-tracking, not an Accessibility read — see docs/SMART_SPACING_PLAN.md.
     private var dictationMemory = DictationMemory()
     private let hotkey = HotkeyMonitor()
     private var engine: WhisperEngine?
@@ -616,7 +616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let secureInputActive = IsSecureEventInputEnabled()
                 let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
                 // Smart Spacing: self-tracked, not an Accessibility read (see
-                // SMART_SPACING_PLAN.md) — only fires if Susurro itself typed
+                // docs/SMART_SPACING_PLAN.md) — only fires if Susurro itself typed
                 // into this same frontmost app last time.
                 if !secureInputActive, self.smartSpacingEnabled, let frontmostPID,
                    SpacingRule.needsLeadingSpace(
