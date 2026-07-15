@@ -60,6 +60,30 @@ permission re-grants after rebuilds.
 | `make dist` | zip for distribution (version from Info.plist) |
 | `make clean` | remove `.build/` and `build/` |
 
+## Legacy model seeding (dev machines only)
+
+If you have a local `whisper.cpp` checkout with its own `models/ggml-small.en.bin`
+(from following the whisper.cpp build instructions directly, independent of this
+repo's `vendor/whisper.cpp` submodule), Susurro can adopt that file by local copy
+on launch instead of re-downloading the 466 MB model from Hugging Face.
+
+This is gated behind the `SUSURRO_DEV_SEED_LEGACY_MODEL=1` environment variable
+(`ModelManager.seedFromLegacyIfNeeded`, checked against
+`~/Git_Repos/whisper.cpp/models/ggml-small.en.bin`) so it never fires in a
+production build or launch — Homebrew installs, distributed zips, and
+`make install`/`make dist` builds should never reach outside their own
+sandboxed Application Support data. It's also why `brew uninstall --zap`
+looked like it wasn't removing models on a dev machine: zap deleted them fine,
+but relaunching the (old, ungated) build silently reseeded from the legacy
+checkout.
+
+`make run` sets this automatically via `open --env`. If you launch the binary
+directly for debugging (see below), export it yourself:
+
+```bash
+SUSURRO_DEV_SEED_LEGACY_MODEL=1 ./build/Susurro.app/Contents/MacOS/Susurro
+```
+
 ## Testing
 
 - **Unit/golden tests** (`make test`): PostProcessor goldens are pinned to the
