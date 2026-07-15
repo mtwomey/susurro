@@ -45,9 +45,13 @@ public final class ModelManager {
         seedFromLegacyIfNeeded()
     }
 
-    /// One-time migration: adopt the whisper.cpp checkout's small.en via local copy
-    /// instead of a 466 MB re-download.
+    /// Dev-only convenience: adopt the whisper.cpp checkout's small.en via local
+    /// copy instead of a 466 MB re-download. Gated behind SUSURRO_DEV_SEED_LEGACY_MODEL
+    /// so production builds/launches never reach outside their own sandboxed data
+    /// (and so `brew uninstall --zap` isn't silently undone on next launch). See
+    /// DEVELOPMENT.md for how `make run` sets this automatically.
     private func seedFromLegacyIfNeeded() {
+        guard ProcessInfo.processInfo.environment["SUSURRO_DEV_SEED_LEGACY_MODEL"] == "1" else { return }
         guard let smallEN = Self.catalog.first(where: { $0.id == "small.en" }) else { return }
         let destination = path(for: smallEN)
         let fm = FileManager.default
@@ -74,17 +78,15 @@ public final class ModelManager {
         downloadProgress[model.id] != nil
     }
 
-    /// Path for the active model; falls back to the legacy checkout if the managed
-    /// file is missing. Nil means no model available at all.
+    /// Path for the active model. Nil means no model available at all. The legacy
+    /// whisper.cpp checkout is never consulted here -- seedFromLegacyIfNeeded()
+    /// (gated behind SUSURRO_DEV_SEED_LEGACY_MODEL) is the single, dev-only entry
+    /// point for adopting it, so this stays a plain check of managed storage and
+    /// behaves identically to a fresh install when that flag isn't set.
     public func activeModelPath() -> String? {
-        if let model = Self.catalog.first(where: { $0.id == activeModelID }),
-           isDownloaded(model) {
-            return path(for: model).path
-        }
-        if FileManager.default.fileExists(atPath: Self.legacyModelPath) {
-            return Self.legacyModelPath
-        }
-        return nil
+        guard let model = Self.catalog.first(where: { $0.id == activeModelID }),
+              isDownloaded(model) else { return nil }
+        return path(for: model).path
     }
 
     public func delete(_ model: WhisperModel) {
