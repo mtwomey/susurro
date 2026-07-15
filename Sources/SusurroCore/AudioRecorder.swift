@@ -11,6 +11,16 @@ public final class AudioRecorder: @unchecked Sendable {
 
     public private(set) var isRecording = false
 
+    /// Apple's Voice Processing I/O -- acoustic echo cancellation, noise
+    /// suppression, and automatic gain control, the same system component
+    /// FaceTime/Zoom/Teams sit on top of. Off by default (plain mic capture,
+    /// today's production behavior). Toggling only takes effect on the next
+    /// start() -- there's no live reconfiguration mid-recording, but that's
+    /// fine since push-to-talk already does a full stop/start each time.
+    /// Prototype/experimental: not yet validated against the mic-mode-pill
+    /// and capture-quality investigations in docs/PLAN.md.
+    public var voiceProcessingEnabled = false
+
     /// Called with the peak level (0...1) of each captured buffer — feeds the overlay waveform later.
     public var levelHandler: (@Sendable (Float) -> Void)?
 
@@ -44,6 +54,16 @@ public final class AudioRecorder: @unchecked Sendable {
         lock.unlock()
 
         let input = engine.inputNode
+        if input.isVoiceProcessingEnabled != voiceProcessingEnabled {
+            do {
+                try input.setVoiceProcessingEnabled(voiceProcessingEnabled)
+            } catch {
+                NSLog("[susurro] setVoiceProcessingEnabled(\(voiceProcessingEnabled)) failed: \(error)")
+            }
+        }
+        // Read the format *after* toggling voice processing -- enabling it can
+        // change the input node's native format (e.g. forcing a different
+        // sample rate), and the AVAudioConverter below needs the real one.
         let inputFormat = input.outputFormat(forBus: 0)
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
