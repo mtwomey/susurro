@@ -42,6 +42,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         get { UserDefaults.standard.bool(forKey: "smartSpacingEnabled") } // default off
         set { UserDefaults.standard.set(newValue, forKey: "smartSpacingEnabled") }
     }
+    // Prototype: Apple's Voice Processing I/O (AEC + noise suppression + AGC).
+    // See AudioRecorder.voiceProcessingEnabled. Not yet validated against the
+    // mic-mode-pill investigation in docs/PLAN.md -- experimental, off by default.
+    private var voiceProcessingEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "voiceProcessingEnabled") } // default off
+        set { UserDefaults.standard.set(newValue, forKey: "voiceProcessingEnabled") }
+    }
     // Self-tracking, not an Accessibility read — see docs/SMART_SPACING_PLAN.md.
     private var dictationMemory = DictationMemory()
     private let hotkey = HotkeyMonitor()
@@ -125,6 +132,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         smartSpacingItem.target = self
         smartSpacingItem.state = smartSpacingEnabled ? .on : .off
         menu.addItem(smartSpacingItem)
+
+        // Prototype toggle -- see voiceProcessingEnabled / AudioRecorder.swift.
+        let voiceProcessingItem = NSMenuItem(
+            title: "Echo Cancellation (Experimental)",
+            action: #selector(toggleVoiceProcessing(_:)),
+            keyEquivalent: ""
+        )
+        voiceProcessingItem.target = self
+        voiceProcessingItem.state = voiceProcessingEnabled ? .on : .off
+        menu.addItem(voiceProcessingItem)
+        recorder.voiceProcessingEnabled = voiceProcessingEnabled
 
         cleanupItem = NSMenuItem(title: "AI Cleanup", action: #selector(cleanupAction), keyEquivalent: "")
         cleanupItem.target = self
@@ -523,6 +541,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toast.show(smartSpacingEnabled
             ? "Smart Spacing on — dictating again adds a space, unless one's already there"
             : "Smart Spacing off")
+    }
+
+    @objc private func toggleVoiceProcessing(_ sender: NSMenuItem) {
+        voiceProcessingEnabled.toggle()
+        sender.state = voiceProcessingEnabled ? .on : .off
+        recorder.voiceProcessingEnabled = voiceProcessingEnabled
+        toast.show(voiceProcessingEnabled
+            ? "Echo Cancellation on (experimental) — takes effect on your next dictation"
+            : "Echo Cancellation off")
     }
 
     @objc private func toggleLoginItem(_ sender: NSMenuItem) {
