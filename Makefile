@@ -42,7 +42,7 @@ app:
 
 # SUSURRO_DEV_SEED_LEGACY_MODEL=1 lets a dev machine with a local whisper.cpp
 # checkout skip a 466 MB re-download by copying its small.en model in on first
-# launch (see ModelManager.seedFromLegacyIfNeeded + DEVELOPMENT.md). Kept out
+# launch (see ModelManager.seedFromLegacyIfNeeded + docs/DEVELOPMENT.md). Kept out
 # of `make install`/`make dist` on purpose -- production launches shouldn't
 # reach outside their own sandboxed data.
 run: app

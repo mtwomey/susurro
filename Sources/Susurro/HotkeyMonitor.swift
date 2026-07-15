@@ -12,7 +12,7 @@ struct PTTKey: Sendable, Equatable {
 
     // Curated known-good hold keys. Regular keys (F13 etc.) are supported by the
     // monitor (modifierFlag: nil → keyDown/keyUp + swallow) but not offered in the
-    // menu — a validated "Custom key…" capture flow is parked in PLAN.md v2 for
+    // menu — a validated "Custom key…" capture flow is parked in docs/PLAN.md v2 for
     // programmable-keyboard users.
     static let all: [PTTKey] = [
         PTTKey(id: "rightOption",  title: "Right Option (⌥)",  keyCode: 61, modifierFlag: .maskAlternate),
