@@ -27,35 +27,26 @@ leaves your machine.
 brew install --cask mtwomey/susurro/susurro
 ```
 
-Homebrew handles the Gatekeeper quarantine flag automatically — no "Open
-Anyway" dance required. To upgrade later:
-
 ```bash
 brew upgrade --cask susurro
 ```
 
 ### Option B — Manual zip
 
-Download the latest zip from [Releases](https://github.com/mtwomey/susurro/releases).
+Download the latest zip from [Releases](https://github.com/mtwomey/susurro/releases),
+then unzip and drag **Susurro.app** to `~/Applications`.
 
-1. Unzip and drag **Susurro.app** to `/Applications`
-2. Launch it. macOS will refuse ("Apple could not verify…") because this build
-   isn't notarized. Strip the quarantine flag from Terminal:
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/Susurro.app
-   ```
-   > **Note:** On managed/corporate Macs the "Open Anyway" button in System
-   > Settings may be hidden by MDM policy — the `xattr` command above is the
-   > reliable workaround in that case.
-3. Grant the two permissions when prompted:
+## First run (either install method)
+
+1. Grant the two permissions when prompted:
    - **Microphone** (recording)
    - **Accessibility** (the hold-key listener and typing) — System Settings →
      Privacy & Security → Accessibility → enable Susurro, then quit & relaunch
-4. On first run Susurro automatically downloads the default **small.en** model
+2. On first run Susurro automatically downloads the default **small.en** model
    (~466 MB, one time) — a banner appears when the download starts and a
    notification when dictation is ready. Other sizes are available under the
    **Model** menu.
-5. Hold **Right Option**, speak, release. Done.
+3. Hold **Right Option**, speak, release. Done.
 
 Optional: menu → **Start at Login**.
 
