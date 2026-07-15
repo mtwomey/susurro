@@ -214,9 +214,19 @@ listening: "very little... but still noticeable."
 | Toggle VP only when the feature is flipped (current branch state) | None (matches plain path) | Reduced via `.min`, but still audible; doesn't fully lift between presses |
 
 No option found eliminates both costs simultaneously. Resuming this work
-should start by deciding which of these two feels worse in practice, or by
-looking for a third option (e.g., disabling VP after some idle timeout
-following `stop()`, rather than immediately or never — untried).
+should start by deciding which of these two feels worse in practice.
+
+A third option was considered and rejected without needing to prototype
+it: disabling VP after some idle timeout following `stop()`, rather than
+immediately or never. It doesn't actually resolve the trade-off, just
+narrows when each cost shows up — the core pain point is latency
+specifically at the moment of pressing the key, and normal dictation has
+pauses between utterances longer than any reasonable timeout, so the
+first press after a real pause would still eat the full reconfiguration
+cost. It would only help the atypical case of rapid back-to-back presses
+inside the timeout window, and would only fix ducking during idle
+stretches when nothing is being pressed anyway — i.e., it doesn't
+noticeably help either side of the trade-off during actual use.
 
 ## Other findings worth knowing before resuming
 
