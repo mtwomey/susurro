@@ -8,7 +8,7 @@ import Foundation
 ///
 /// Why this exists: a true mic input session gets a `mic:` attribution and triggers
 /// Control Center's mic-modes pill in the menu bar. SCK capture is attributed as
-/// `aud`/`scr` and does not (see PLAN.md "mic-mode pill"). The trade-offs:
+/// `aud`/`scr` and does not (see docs/PLAN.md "mic-mode pill"). The trade-offs:
 ///   - Requires the Screen Recording TCC permission (display content filter)
 ///   - Stream startup is an async daemon negotiation — audio spoken before the
 ///     stream is live is LOST. This class logs keypress→first-sample latency.

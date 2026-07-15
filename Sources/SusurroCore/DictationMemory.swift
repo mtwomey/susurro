@@ -5,7 +5,7 @@ import Foundation
 /// dictation — without reading the target app's UI at all.
 ///
 /// This replaces an earlier Accessibility-based design (see
-/// SMART_SPACING_PLAN.md's "Pivot" section): `kAXSelectedTextRangeAttribute`,
+/// docs/SMART_SPACING_PLAN.md's "Pivot" section): `kAXSelectedTextRangeAttribute`,
 /// the standard way to ask "where's the cursor," is only reliably
 /// implemented by native Cocoa text views (TextEdit, Notes, Mail). Electron
 /// apps and Chromium/WebKit web content expose cursor position through an

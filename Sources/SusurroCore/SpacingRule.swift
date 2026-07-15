@@ -5,7 +5,7 @@ import Foundation
 /// `DictationMemory`), decide whether the next dictated transcript should
 /// get a leading space prepended. Deliberately has no Accessibility/AppKit
 /// dependency so it can be unit-tested without a live focused text field —
-/// see SMART_SPACING_PLAN.md.
+/// see docs/SMART_SPACING_PLAN.md.
 public enum SpacingRule {
     /// A resumed dictation always gets a leading space — in practice you're
     /// never picking up mid-word, so any continuation needs a word boundary

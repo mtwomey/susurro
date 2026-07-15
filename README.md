@@ -88,10 +88,14 @@ Access, or edit `SIGN_ID` in the Makefile.
 
 ## For developers
 
-- `ARCHITECTURE.md` — as-built structure, code map, dataflow, hard-won constraints
-- `DEVELOPMENT.md` — machine setup (incl. signing identity), make targets,
+All developer docs live in [`docs/`](docs):
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — as-built structure, code map, dataflow, hard-won constraints
+- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — machine setup (incl. signing identity), make targets,
   testing, debugging, release process
-- `PLAN.md` — historical design doc: decisions, spike data, investigations,
+- [`docs/PLAN.md`](docs/PLAN.md) — historical design doc: decisions, spike data, investigations,
   rejected alternatives, v2 parking lot
-- `CHECKLIST.md` — manual release acceptance checklist
-- `docs/releasing.md` — step-by-step release process including Homebrew tap update
+- [`docs/SMART_SPACING_PLAN.md`](docs/SMART_SPACING_PLAN.md) — Smart Spacing design doc: why an
+  Accessibility-based approach was rejected in favor of self-tracking
+- [`docs/CHECKLIST.md`](docs/CHECKLIST.md) — manual release acceptance checklist
+- [`docs/releasing.md`](docs/releasing.md) — step-by-step release process including Homebrew tap update
