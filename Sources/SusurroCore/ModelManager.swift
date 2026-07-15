@@ -45,9 +45,13 @@ public final class ModelManager {
         seedFromLegacyIfNeeded()
     }
 
-    /// One-time migration: adopt the whisper.cpp checkout's small.en via local copy
-    /// instead of a 466 MB re-download.
+    /// Dev-only convenience: adopt the whisper.cpp checkout's small.en via local
+    /// copy instead of a 466 MB re-download. Gated behind SUSURRO_DEV_SEED_LEGACY_MODEL
+    /// so production builds/launches never reach outside their own sandboxed data
+    /// (and so `brew uninstall --zap` isn't silently undone on next launch). See
+    /// DEVELOPMENT.md for how `make run` sets this automatically.
     private func seedFromLegacyIfNeeded() {
+        guard ProcessInfo.processInfo.environment["SUSURRO_DEV_SEED_LEGACY_MODEL"] == "1" else { return }
         guard let smallEN = Self.catalog.first(where: { $0.id == "small.en" }) else { return }
         let destination = path(for: smallEN)
         let fm = FileManager.default
