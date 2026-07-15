@@ -40,10 +40,15 @@ app:
 	@codesign --force --options runtime --entitlements Support/Susurro.entitlements --sign "$(SIGN_ID)" $(APP)
 	@echo "✓ $(APP)"
 
+# SUSURRO_DEV_SEED_LEGACY_MODEL=1 lets a dev machine with a local whisper.cpp
+# checkout skip a 466 MB re-download by copying its small.en model in on first
+# launch (see ModelManager.seedFromLegacyIfNeeded + DEVELOPMENT.md). Kept out
+# of `make install`/`make dist` on purpose -- production launches shouldn't
+# reach outside their own sandboxed data.
 run: app
 	@pkill -x $(APP_NAME) 2>/dev/null || true
 	@sleep 0.3
-	open $(APP)
+	open --env SUSURRO_DEV_SEED_LEGACY_MODEL=1 $(APP)
 
 test:
 	swift test
