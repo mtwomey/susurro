@@ -165,10 +165,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rulesItem.target = self
         menu.addItem(rulesItem)
 
-        let gitHubItem = NSMenuItem(title: "GitHub", action: #selector(openGitHub), keyEquivalent: "")
-        gitHubItem.target = self
-        menu.addItem(gitHubItem)
-
         let quitItem = NSMenuItem(title: "Quit Susurro", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -413,10 +409,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openRules() {
         NSWorkspace.shared.open(postProcessor.userRulesURL)
-    }
-
-    @objc private func openGitHub() {
-        NSWorkspace.shared.open(URL(string: "https://github.com/mtwomey/susurro")!)
     }
 
     // Routed through our own selector rather than #selector(NSApplication.terminate(_:))
@@ -673,6 +665,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
            let icon = NSImage(contentsOf: iconURL) {
             alert.icon = icon
         }
+        // Clickable GitHub link as an accessory view. NSTextField opens
+        // .link attributes itself once selectable — no target/action needed.
+        let githubURL = "https://github.com/mtwomey/susurro"
+        let link = NSTextField(labelWithAttributedString: NSAttributedString(
+            string: githubURL,
+            attributes: [
+                .link: URL(string: githubURL)!,
+                .foregroundColor: NSColor.linkColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+            ]
+        ))
+        link.isSelectable = true
+        link.frame = NSRect(x: 0, y: 0, width: 260, height: 18)
+        alert.accessoryView = link
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }
