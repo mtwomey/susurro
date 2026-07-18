@@ -18,6 +18,9 @@ enum DefaultRules {
             "punctuation ..... spoken trigger -> inserted symbol. Susurro handles word",
             "                  boundaries and strips stray commas/periods that whisper",
             "                  puts around trigger words. No regex needed.",
+            "                  Add \"noSpaceBefore\": true to a rule if its symbol should",
+            "                  hug the preceding word instead of getting a space before",
+            "                  it, e.g. colon/semicolon below, or your own custom symbol.",
             "substitutions ... plain text fix-ups applied to the whole transcript,",
             "                  case-insensitive, whole-word. Good for jargon whisper",
             "                  mishears, e.g. 'launch DP list' -> 'launchd plist'.",
@@ -40,6 +43,8 @@ enum DefaultRules {
             { "say": "full stop",         "insert": "." },
             { "say": "question mark",     "insert": "?" },
             { "say": "exclamation point", "insert": "!" },
+            { "say": "colon",             "insert": ":", "noSpaceBefore": true },
+            { "say": "semicolon",         "insert": ";", "noSpaceBefore": true },
             { "say": "new line",          "insert": "\n" },
             { "say": "backslash",         "insert": "\\" }
         ],
