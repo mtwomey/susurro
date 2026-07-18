@@ -106,4 +106,42 @@ import Testing
         let processor = PostProcessor(userRulesURL: url)
         #expect(processor.process("hello comma world") == "Hello, world")
     }
+
+    // MARK: noSpaceBefore (colon/semicolon and custom symbols)
+
+    @Test func colonAndSemicolonHugPrecedingWord() {
+        // Bundled defaults: colon/semicolon ship with "noSpaceBefore": true,
+        // so the space whisper leaves before the trigger word gets stripped
+        // the same way it already does for comma/period/?/!.
+        #expect(makeProcessor().process("add a section colon this is the content")
+                == "Add a section: this is the content")
+        #expect(makeProcessor().process("list the items semicolon then continue")
+                == "List the items; then continue")
+    }
+
+    @Test func noSpaceBeforeIsOptInForCustomSymbols() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("susurro-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("rules.json")
+        try """
+        {
+            "options": { "pairQuotes": true, "autoCapitalize": true, "normalizeWhitespace": true },
+            "punctuation": [
+                { "say": "arrow", "insert": "\u{2192}", "noSpaceBefore": true },
+                { "say": "tilde", "insert": "~" }
+            ],
+            "substitutions": [],
+            "regexRules": []
+        }
+        """.write(to: url, atomically: true, encoding: .utf8)
+        let processor = PostProcessor(userRulesURL: url)
+        // "arrow" opted in via noSpaceBefore -> hugs the preceding word.
+        #expect(processor.process("click next arrow open settings")
+                == "Click next\u{2192} open settings")
+        // "tilde" didn't opt in -> keeps the space, same as any other
+        // word-boundary substitution today.
+        #expect(processor.process("home tilde documents")
+                == "Home ~ documents")
+    }
 }
