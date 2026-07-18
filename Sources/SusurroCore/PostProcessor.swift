@@ -12,7 +12,14 @@ public struct PostProcessingRules: Codable, Sendable {
         public var say: String
         public var insert: String
         public var enabled: Bool?
+        /// When true, a space immediately before the inserted symbol is
+        /// stripped during whitespace cleanup — e.g. colon/semicolon, which
+        /// should hug the preceding word ("word:" not "word :"). The four
+        /// classic sentence-enders (,.?!) already get this for free below,
+        /// so they don't need the flag; it exists for everything else.
+        public var noSpaceBefore: Bool?
         var isEnabled: Bool { enabled ?? true }
+        var isNoSpaceBefore: Bool { noSpaceBefore ?? false }
     }
 
     public struct SubstitutionRule: Codable, Sendable {
@@ -131,8 +138,18 @@ public final class PostProcessor: @unchecked Sendable {
             result = replace(in: result, pattern: "[ \\t]+", template: " ")
             result = replace(in: result, pattern: " *\\n *", template: "\n")
             result = result.trimmingCharacters(in: .whitespacesAndNewlines)
-            // "word ." -> "word.", "word , word" -> "word, word"
-            result = replace(in: result, pattern: "[ \\t]+([,.?!])", template: "$1")
+            // "word ." -> "word.", "word , word" -> "word, word" for the
+            // classic sentence-enders, plus any punctuation rule that opted
+            // in via "noSpaceBefore": true (e.g. colon, semicolon, or any
+            // custom symbol a user adds to their own rules.json).
+            let extraAttached = enabledPunctuation
+                .filter(\.isNoSpaceBefore)
+                .map(\.insert)
+                .filter { !$0.isEmpty }
+            let alternatives = (["[,.?!]"] + extraAttached.map {
+                NSRegularExpression.escapedPattern(for: $0)
+            }).joined(separator: "|")
+            result = replace(in: result, pattern: "[ \\t]+(\(alternatives))", template: "$1")
         }
 
         // 7. Capitalize a sentence-start-like string
