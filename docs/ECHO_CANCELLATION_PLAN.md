@@ -7,9 +7,9 @@
 > debugging journey and trade-offs below are the valuable part, more than
 > the code itself.
 >
-> Tested on: a macOS system, a recent macOS release, local audio input.
+> Tested on a macOS system with local audio input.
 > Findings about channel layout, timing, and ducking behavior are from
-> this the tested environment and may not generalize.
+> the tested environment and may not generalize.
 
 ## Goal
 
@@ -45,7 +45,7 @@ reasons). This investigation never touched that constraint.
 
 Enabling voice processing via `input.setVoiceProcessingEnabled(true)` makes
 `AVAudioEngine.inputNode.outputFormat(forBus: 0)` report a non-standard
-format — in testing, **a non-standard multichannel format** — instead of the normal
+format — in the tested environment, a non-standard multichannel format — instead of the normal
 1-channel format. Every attempt below was really about coping with that one
 surprise; each seemed reasonable and failed for a different, informative
 reason.
@@ -54,12 +54,12 @@ reason.
 bogus multichannel format, feed straight into an `AVAudioConverter` targeting
 16 kHz mono (same converter the plain path already uses). Result: converter
 output was exactly 0.0 peak, silence. Raw *pre-conversion* buffers also
-showed only near-noise-floor peaks (~0.001) on all input channels, even while
+showed only near-noise-floor peaks (~0.001) across the input channels, even while
 someone was actively talking. This exact symptom — enabling voice processing
 explodes a clean 1-channel input into a bogus multichannel layout that
 downstream code can't handle — is independently documented in at least two
-unanswered Apple Developer Forums threads (one saw 3 channels, another 7; we
-saw 9). Nobody in either thread had a confirmed fix.
+unanswered Apple Developer Forums threads, which reported varying channel
+counts. Nobody in either thread had a confirmed fix.
 
 **Attempt 2 — `AVAudioMixerNode` downmix.** The forum consensus/guess was
 that `AVAudioConverter` can't downmix this layout but `AVAudioMixerNode` is
@@ -110,7 +110,7 @@ that throw, capture was **still exactly 0.0 peak**. This falsified the
 **Attempt 5 — explicit device pinning.** Hypothesis: `AVAudioEngine`'s
 default input device silently resolved to some aggregate/virtual device,
 explaining the anomalous channel count. Pinned the underlying audio unit to
-the verified built-in mic via `kAudioOutputUnitProperty_CurrentDevice` and
+the verified input device via `kAudioOutputUnitProperty_CurrentDevice` and
 CoreAudio device enumeration. Result: pinning worked (verified device
 match) but the format was still multichannel and capture was still 0.0 peak —
 falsified. Side finding: calling `AudioUnitSetProperty` here also
@@ -120,14 +120,14 @@ so it was reverted rather than layered on top of anything.
 **Attempt 6 (working) — bypass automatic downmixing entirely.** The one
 common thread across every failed attempt: something was always asked to
 *automatically mix* the input channels down to mono — a mixer node, a sink
-node fed by a mixer, an `AVAudioConverter`. `a multichannel AVAudioFormat`
+node fed by a mixer, an `AVAudioConverter`. A multichannel `AVAudioFormat`
 with no explicit `AVAudioChannelLayout` produces an "unspecified/discrete"
 layout, and both `AVAudioMixerNode` and `AVAudioConverter` silently fall
 back to zeroed output for channel maps they don't recognize — independent
 of render-graph topology. The fix: stop asking anything to mix. Tap
 `inputNode` directly at its own native (odd) format — mechanically
 identical to how the plain path already taps it — then in the tap callback,
-manually inspect every input channel' peak per buffer and `memcpy`
+manually inspect every input channel's peak per buffer and `memcpy`
 (never sum/average) whichever channel is loudest into a genuine mono
 buffer. That mono buffer feeds the same `AVAudioConverter` + `process()`
 the plain path already uses, for the 16 kHz sample-rate step only (a
@@ -143,9 +143,9 @@ recreating if this work resumes) and then via live dictation.
 
 Interesting secondary finding: all reported channels carried *identical*
 content in testing — likely a duplicated/broadcast layout rather than
-9 distinct microphone signals. The implementation picks the loudest channel
+distinct input signals. The implementation picks the loudest channel
 once per recording (not re-picked every buffer) specifically because, on
-hardware where the channels genuinely differ, re-picking per buffer could
+environments where the channels genuinely differ, re-picking per buffer could
 audibly click at each switch — untested, since this machine's channels
 never actually differed.
 
