@@ -30,9 +30,9 @@ Built for Matthew first, but clean enough to hand to a coworker.
 | Overlay | Non-activating NSPanel: live waveform + elapsed timer, no text preview | Never steals focus → deletes the entire save/restore-focus dance; text preview possible in v2 without rework |
 | LLM cleanup | v1, **opt-in** (settings toggle), Foundation Models on-device | ~0.3–1s extra on short dictations; off the default path |
 | History | **Dropped from v1**; transcripts not persisted | Revisit in v2 (menu bar list first, window later) |
-| Models | In-app download to Application Support; **size picker in settings** — tiny.en / base.en / small.en (default) / medium.en / large-v3-turbo, showing size + speed/accuracy tradeoff; switching hot-swaps the loaded model | Required for shareability; no more pointing at ~/whisper.cpp |
+| Models | In-app download to Application Support; **size picker in settings** — tiny.en / base.en / small.en (default) / medium.en / large-v3-turbo, showing size + speed/accuracy tradeoff; switching hot-swaps the loaded model | Required for shareability; no more pointing at a local legacy checkout |
 | Distribution | Unsigned for now; structure for Developer ID signing later | Signing deferred until sharing is real |
-| Repo | Fresh repo: `the repository checkout`; ptt stays as reference until retired | Clean start |
+| Repo | Fresh repository checkout; ptt stays as reference until retired | Clean start |
 
 ## Architecture
 

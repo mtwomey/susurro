@@ -68,8 +68,8 @@ repo's `vendor/whisper.cpp` submodule), Susurro can adopt that file by local cop
 on launch instead of re-downloading the 466 MB model from Hugging Face.
 
 This is gated behind the `SUSURRO_DEV_SEED_LEGACY_MODEL=1` environment variable
-(`ModelManager.seedFromLegacyIfNeeded`, checked against
-`~/whisper.cpp/models/ggml-small.en.bin`) so it never fires in a
+(`ModelManager.seedFromLegacyIfNeeded`, checked against a local
+`whisper.cpp/models/ggml-small.en.bin` checkout) so it never fires in a
 production build or launch — Homebrew installs, distributed zips, and
 `make install`/`make dist` builds should never reach outside their own
 sandboxed Application Support data. It's also why `brew uninstall --zap`
@@ -87,7 +87,7 @@ SUSURRO_DEV_SEED_LEGACY_MODEL=1 ./build/Susurro.app/Contents/MacOS/Susurro
 ## Testing
 
 - **Unit/golden tests** (`make test`): PostProcessor goldens are pinned to the
-  output of the retired Python implementation (`a local ptt checkout`,
+  output of the retired Python implementation (a local ptt checkout,
   `nemo_itn_daemon.py:apply_verbal_punctuation`) with two documented
   divergences (newline works, single backslash). Don't "fix" goldens casually.
 - **Corpus regression**: `.build/release/susurro-cli <model.bin> Fixtures/*.wav`
@@ -127,5 +127,5 @@ notarization (`notarytool`) removes the "Open Anyway" step — see the
 `PLAN.md` bottom: v2 parking lot (overlay text preview, history, per-app
 formatting, custom PTT key capture flow, streaming AI cleanup, notarization)
 and the mic-pill investigation record. The predecessor Python implementation
-lives in `a local ptt checkout` (local only) for reference; it is retired
+lives in a local ptt checkout (local only) for reference; it is retired
 (`make install` there resurrects it if ever needed).
