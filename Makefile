@@ -14,8 +14,13 @@ WHISPER_DIR = build-whisper
 DEPLOY_TGT  = 15.0
 # Stable self-signed identity — keeps TCC (Accessibility/mic) grants across rebuilds
 SIGN_ID     = Susurro Dev
+# Single source of truth for the version — `make app` copies this plist into the bundle
+VERSION    := $(shell defaults read $(CURDIR)/Support/Info CFBundleShortVersionString)
+ZIP         = $(BUILD_DIR)/$(APP_NAME)-$(VERSION).zip
+TAP         = ../homebrew-susurro
+CASK        = $(TAP)/Casks/susurro.rb
 
-.PHONY: whisper app run test clean dist release
+.PHONY: whisper app run test clean dist release verify-release
 
 whisper:
 	cmake -B $(WHISPER_DIR) vendor/whisper.cpp \
@@ -65,27 +70,65 @@ install: app
 # Distributable zip (self-signed — recipients need the Gatekeeper "Open Anyway"
 # step documented in the README; Developer ID + notarization removes that)
 dist: app
-	@cd $(BUILD_DIR) && ditto -c -k --keepParent $(APP_NAME).app Susurro-$$(defaults read $$(pwd)/$(APP_NAME).app/Contents/Info CFBundleShortVersionString).zip
-	@ls -lh $(BUILD_DIR)/*.zip
+	@cd $(BUILD_DIR) && ditto -c -k --keepParent $(APP_NAME).app $(APP_NAME)-$(VERSION).zip
+	@ls -lh $(ZIP)
 
 clean:
 	rm -rf .build $(BUILD_DIR)
 
-# Build dist zip, compute SHA256, update homebrew-susurro tap, and open for review
+# Cut a release end-to-end: build the zip, pin its SHA256 in the tap, publish the
+# GitHub release, push the tap, then verify the published asset matches the pin.
 # Usage: make release
-# Requires: ../homebrew-susurro to exist (clone https://github.com/mtwomey/homebrew-susurro)
+# Requires: gh authenticated, and $(TAP) to exist
+#           (clone https://github.com/mtwomey/homebrew-susurro)
+#
+# A published version is an immutable contract: the cask pins a SHA256, so
+# re-uploading a rebuilt zip over an existing release silently breaks
+# `brew install` for every new user. That is exactly what happened to 0.1.9 --
+# the asset was replaced 9 days after the cask was pinned, and installs failed
+# with "Cask reports different checksum". Hence the guard below: this refuses to
+# touch a tag that already exists. To ship a change, bump the version.
 release: dist
-	$(eval VERSION := $(shell defaults read $(CURDIR)/$(BUILD_DIR)/$(APP_NAME).app/Contents/Info CFBundleShortVersionString))
-	$(eval ZIP := $(BUILD_DIR)/$(APP_NAME)-$(VERSION).zip)
+	@if gh release view "v$(VERSION)" >/dev/null 2>&1; then \
+		echo "✗ Release v$(VERSION) already exists — never overwrite a published asset."; \
+		echo "  Bump CFBundleShortVersionString in Support/Info.plist and re-run."; \
+		exit 1; \
+	fi
+	@test -f $(CASK) || { echo "✗ $(CASK) not found — clone the tap next to this repo"; exit 1; }
 	$(eval SHA := $(shell shasum -a 256 $(ZIP) | awk '{print $$1}'))
 	@echo "Version : $(VERSION)"
 	@echo "SHA256  : $(SHA)"
-	@CASK=../homebrew-susurro/Casks/susurro.rb; \
-	sed -i '' "s/version \".*\"/version \"$(VERSION)\"/" $$CASK; \
-	sed -i '' "s/sha256 \".*\"/sha256 \"$(SHA)\"/" $$CASK; \
-	echo "✓ Updated $$CASK"
-	@echo ""
-	@echo "Next steps:"
-	@echo "  1. Upload $(ZIP) to a new GitHub release tagged v$(VERSION)"
-	@echo "  2. cd ../homebrew-susurro && git diff   # verify the cask changes"
-	@echo "  3. git -C ../homebrew-susurro commit -am 'Bump to $(VERSION)' && git push"
+	@sed -i '' "s/^  version \".*\"/  version \"$(VERSION)\"/" $(CASK)
+	@sed -i '' "s/^  sha256 \".*\"/  sha256 \"$(SHA)\"/" $(CASK)
+	@echo "✓ Pinned in $(CASK)"
+	@gh release create "v$(VERSION)" $(ZIP) --title "$(APP_NAME) $(VERSION)" --generate-notes
+	@echo "✓ Published release v$(VERSION)"
+	@git -C $(TAP) commit -qam "Bump to $(VERSION)" && git -C $(TAP) push -q
+	@echo "✓ Pushed tap"
+	@$(MAKE) --no-print-directory verify-release
+
+# Confirm the asset on GitHub still hashes to what the tap pins. Safe to run any
+# time — this is the check that would have caught the 0.1.9 drift before a user did.
+verify-release:
+	@set -e; \
+	CASK_VER=$$(awk -F'"' '/^  version /{print $$2; exit}' $(CASK)); \
+	PINNED=$$(awk -F'"' '/^  sha256 /{print $$2; exit}' $(CASK)); \
+	ASSET="$(APP_NAME)-$$CASK_VER.zip"; \
+	echo "Cask pins  : $$CASK_VER / $$PINNED"; \
+	LIVE=$$(gh release view "v$$CASK_VER" --json assets \
+		--jq ".assets[] | select(.name==\"$$ASSET\") | .digest" | sed 's/^sha256://'); \
+	if [ -z "$$LIVE" ]; then \
+		echo "  (no digest from the API — downloading to hash)"; \
+		TMP=$$(mktemp -d); \
+		gh release download "v$$CASK_VER" --pattern "$$ASSET" --dir "$$TMP"; \
+		LIVE=$$(shasum -a 256 "$$TMP/$$ASSET" | awk '{print $$1}'); \
+		rm -rf "$$TMP"; \
+	fi; \
+	echo "Live asset : $$LIVE"; \
+	if [ "$$PINNED" = "$$LIVE" ]; then \
+		echo "✓ Cask matches the published asset"; \
+	else \
+		echo "✗ MISMATCH — brew install fails with 'Cask reports different checksum'"; \
+		echo "  Re-pin the cask to $$LIVE, or restore the zip hashing $$PINNED."; \
+		exit 1; \
+	fi
