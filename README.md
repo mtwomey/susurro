@@ -99,5 +99,7 @@ All developer docs live in [`docs/`](docs):
   rejected alternatives, v2 parking lot
 - [`docs/SMART_SPACING_PLAN.md`](docs/SMART_SPACING_PLAN.md) — Smart Spacing design doc: why an
   Accessibility-based approach was rejected in favor of self-tracking
+- [`docs/VOCABULARY_PROMPT_PLAN.md`](docs/VOCABULARY_PROMPT_PLAN.md) — proposed custom-vocabulary
+  feature (whisper initial-prompt biasing), with spike results
 - [`docs/CHECKLIST.md`](docs/CHECKLIST.md) — manual release acceptance checklist
 - [`docs/releasing.md`](docs/releasing.md) — step-by-step release process including Homebrew tap update
