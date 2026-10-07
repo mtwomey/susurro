@@ -31,6 +31,8 @@ brew install --cask mtwomey/susurro/susurro
 brew upgrade --cask susurro
 ```
 
+If Homebrew says the tap isn't trusted, run `brew trust --cask mtwomey/susurro/susurro`.
+
 ### Option B — Manual zip
 
 Download the latest zip from [Releases](https://github.com/mtwomey/susurro/releases),
