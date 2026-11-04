@@ -34,9 +34,13 @@ Sources/
                               start latency; see PLAN.md
     AudioFileLoader.swift     any audio file → 16kHz mono Float32 (used by CLI/tests)
     AudioResampler.swift      shared mono resample helper
-    ModelManager.swift        model catalog (5 ggml models), HuggingFace download with
-                              progress (FileDownloader: URLSession delegate wrapped in
-                              async/await), active-model selection, legacy-path seed
+    ModelManager.swift        model catalog: entries carry an EngineKind (5 whisper ggml
+                              files + Parakeet TDT v2 Core ML directory); HuggingFace
+                              download with progress (FileDownloader: URLSession delegate
+                              wrapped in async/await; directory models are fetched
+                              file-by-file from the HF tree listing into a staging dir,
+                              then renamed into place), active-model selection,
+                              legacy-path seed
     PostProcessor.swift       verbal punctuation pipeline; loads rules fresh from user
                               rules.json EVERY call (= live reload); falls back to
                               DefaultRules on missing/corrupt file
@@ -132,9 +136,9 @@ key up
 
 | What | Where |
 |---|---|
-| Models | `~/Library/Application Support/Susurro/models/*.bin` |
+| Models | `~/Library/Application Support/Susurro/models/*.bin` (whisper), `.../models/parakeet-tdt-0.6b-v2-coreml/` (Parakeet) |
 | Rules | `~/Library/Application Support/Susurro/rules.json` (created from DefaultRules on first run) |
-| Active model | UserDefaults `activeModelID` (default "small.en") |
+| Active model | UserDefaults `activeModelID` (default "small.en"; unknown/missing ids resolve to the default without rewriting the stored value) |
 | PTT key | UserDefaults `pttKeyID` (default rightOption) |
 | AI cleanup | UserDefaults `llmCleanupEnabled` (default false) |
 | Clipboard copy | UserDefaults `copyToClipboard` (default false; secure-input auto-copy is unconditional) |

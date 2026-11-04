@@ -228,7 +228,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func rebuildModelMenu() {
         modelMenu.removeAllItems()
-        for model in ModelManager.catalog {
+        // Parakeet is in the catalog (BEA-634) but only exposed once the app can
+        // load it (BEA-635); until then the menu lists whisper models only.
+        for model in ModelManager.available() where model.engine == .whisper {
             let item = NSMenuItem(title: "", action: #selector(modelMenuAction(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = model.id

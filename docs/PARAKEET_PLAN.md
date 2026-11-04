@@ -106,3 +106,41 @@ the deferred vocabulary feature would help.
   needs an actor or isolated owner under Swift 6 strict concurrency.
 - Gate the option to Apple Silicon.
 - Remove the `parakeet-spike` target, or keep it as a dev harness, before BEA-639.
+
+## Model catalog and download manager (BEA-634)
+
+- `CatalogModel` (alias `WhisperModel` for source compatibility) carries an
+  `EngineKind`: `.whisper` (single ggml file) or `.parakeet` (Core ML model
+  directory). New entry `parakeet-tdt-v2`, ~443 MB, repo
+  `FluidInference/parakeet-tdt-0.6b-v2-coreml`. `ModelManager.available()`
+  hides it off Apple Silicon.
+- **Downloader decision: Susurro's `FileDownloader`, not FluidAudio's.**
+  FluidAudio's `AsrModels.download(to:)` has no progress callback (its
+  `ProgressHandler` is documented as unused), and it compiles/loads every model
+  as part of "download", so the menu could only show an indeterminate wait of
+  minutes. Susurro lists the HF repo tree
+  (`/api/models/<repo>/tree/main?recursive=true`), fetches only the files under
+  the five required entries (`Preprocessor`, `Encoder`, `Decoder`,
+  `JointDecision` `.mlmodelc`, `parakeet_vocab.json`; 21 files, 464,413,247
+  bytes on 2026-11-04) with byte-weighted progress into
+  `models/.parakeet-tdt-0.6b-v2-coreml.partial/`, then renames it to
+  `~/Library/Application Support/Susurro/models/parakeet-tdt-0.6b-v2-coreml/`.
+  A partial download never counts as `isDownloaded`. The directory name equals
+  FluidAudio's `folderName` (unit-tested) because `AsrModels.load(from:version:)`
+  resolves files relative to it; BEA-635 loads with
+  `AsrModels.load(from: path, version: .v2)`, never `downloadAndLoad`, so
+  nothing is written to `~/Library/Application Support/FluidAudio`.
+- `delete` removes the directory (and any staging leftovers); `isDownloaded`
+  requires every required entry.
+- **activeModelID migration:** the key and stored values are unchanged. Every
+  value a released build wrote is a whisper catalog id and resolves to itself;
+  nil or unknown values resolve to `small.en` without rewriting the default.
+  Existing whisper users see no change.
+- The menu still lists whisper models only, until BEA-635 can load Parakeet.
+- Tests: `Tests/SusurroTests/ModelManagerTests.swift` (12 unit tests: catalog,
+  engine kinds, Intel gating, migration, file/directory storage, HF listing
+  filter). One env-gated live test
+  (`SUSURRO_LIVE_DOWNLOAD=1 swift test --filter liveParakeet`) passed on
+  2026-11-04: real download to a scratch directory, 1,464 progress callbacks up
+  to 1.0, FluidAudio load + transcribe from the Susurro-owned directory, then
+  delete. It took 157.6 s.
