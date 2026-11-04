@@ -372,9 +372,22 @@ Selected rows (full 160-row table: run the script; 2026-11-04, M2 Pro):
 - (a) Zero pad: no length from 50-1500 ms meets the bar. Every length changes clip1/clip2
   (and smoke at most lengths); marks need >= 450 ms.
 - (b) Frame-aligned (1280-sample) pads and low-level noise instead of zeros behave like (a).
-  No pad shape tested is body-neutral. Likely cause (inferred, not traced in
-  FluidAudio's source): the encoder attends over the whole buffer, so any
-  appended audio can shift decoding of earlier words.
+  No pad shape tested is body-neutral. Causes (verified):
+  1. Per-utterance feature normalisation. Parakeet's preprocessor (NeMo
+     `normalize: per_feature`, baked into FluidAudio's Preprocessor.mlmodelc:
+     length mask + reduce_sum + sqrt + div) rescales every mel band by the mean/std
+     of the whole valid buffer. Padding is counted as valid audio, so it shifts the
+     features of the speech itself: on smoke.wav the speech-region mel moves by a
+     mean 0.016 / 0.075 / 0.139 / 0.197 normalised units at 100 / 500 / 1000 /
+     1500 ms pad (`scripts/mel_norm_probe.py`; needs `uv run --with coremltools
+     --with numpy`). FluidAudio's own zero-fill to 15 s sits beyond `audio_length`
+     and is masked, which is why it is harmless and ours is not. The encoder's
+     full-utterance attention also sees the new frames.
+  2. The 15 s window. FluidAudio transcribes <= 240,000 samples in one window and
+     longer audio through overlapping chunks (ChunkProcessor). clip1-3 are exactly
+     15.00 s, so any pad moved them onto the chunked path; that, not the silence,
+     is what changed clip1/clip2. Short push-to-talk clips kept their words under
+     every pad; smoke.wav (9.8 s) is the cause-1 case.
 - (d) Question-word heuristic: passes on this set, but guesses (imperatives such
   as "Do the dishes" would get "?"); the model's own judgment is preferred.
 - (c) Two-pass meets the bar at every pad from 450 to 1500 ms: the body is the
