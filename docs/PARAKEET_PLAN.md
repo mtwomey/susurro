@@ -1,13 +1,50 @@
-# Parakeet TDT v2 engine — plan and feasibility spike
+# Parakeet TDT v2 engine — feature plan
 
-Parent: BEA-631. Board decisions: BEA-630. This document starts with the BEA-632
-feasibility spike; later tickets (633–640) extend it.
+> Status: **built**, on branch `feature/parakeet-v2` (BEA-632 to BEA-638,
+> docs in BEA-640). **Not yet released**: the board's hands-on dogfood test
+> (BEA-641) comes first, then a single PR into `main` and a normal release
+> with a Homebrew cask update (BEA-639). Companion to `ARCHITECTURE.md`
+> (as-built structure) and `PLAN.md` (v1 historical design doc). Where this
+> document and reality differ, they win, per this repo's usual convention.
+>
+> The sections below are kept in ticket order as the build log. "As built"
+> right after the goal summarises what shipped on the branch and what
+> differs from the spike.
+
+Parent: BEA-631. Board decisions: BEA-630.
 
 ## Goal
 
 Add NVIDIA Parakeet TDT 0.6B v2 (English, CC-BY-4.0, Core ML) as an
 **additional** engine option via FluidAudio. `small.en` stays the default;
 existing users' `activeModelID` is untouched. Custom vocabulary is out of scope.
+
+## As built (summary)
+
+| Area | What shipped | Where |
+|---|---|---|
+| Engine abstraction | `TranscriptionEngine` protocol (Sendable, warm, serialized, `kind`); `WhisperEngine` and `ParakeetEngine` conform; `TranscriptionEngines.load` picks by catalog `EngineKind` or path shape | `TranscriptionEngine.swift`, BEA-633/635 |
+| Dependency | FluidAudio pinned `exact: "0.9.1"`, linked into `SusurroCore`; whisper flags made absolute + `-Xcc` swiftSettings | `Package.swift`, BEA-632/633 |
+| Catalog | `parakeet-tdt-v2`, 443 MB, English, Apple Silicon only; 5 whisper models unchanged; `small.en` default; `activeModelID` key/values untouched | `ModelManager.swift`, BEA-634 |
+| Download | Susurro's own `FileDownloader` over the HF tree listing, byte-weighted progress, staging dir + rename; FluidAudio's downloader is never used and its cache dir never written | BEA-634 |
+| Load | `AsrModels.load(from:version: .v2)` behind a `modelsExist` guard (no silent re-download); first load ~20 s (Core ML compile), then sub-second | `ParakeetEngine.swift`, BEA-635 |
+| Switching | Menu pick → `loadEngine()` off-main; generation counter drops stale loads; transcription errors surface as a toast | `AppDelegate.swift`, BEA-635 |
+| Post-processing | Trigger-adjacent punctuation strip, mid-sentence recasing, quote-mark absorption; whisper-only `[...]` filter; Smart Spacing unchanged | `PostProcessor.swift`, `TranscriptFilter.swift`, BEA-636 |
+| CLI / A/B | `susurro-cli --engine/--model/--post`; `scripts/ab_engines.py`; WER 2.4% (Parakeet) vs 11.4% (small.en), ~0.07 vs 0.25 s per clip | BEA-637 |
+| UI | Model menu sectioned by engine with size + note in every state; Help text; About shows NVIDIA CC-BY-4.0 / FluidInference / FluidAudio credit | BEA-638 |
+| Docs | `ARCHITECTURE.md` (engines & catalog section, code map, constraints), README (model options, attribution), this file | BEA-640 |
+
+Differences from the spike and the original goal:
+
+- The spike's `downloadAndLoad(version: .v2)` path was dropped. Susurro
+  downloads into its own models directory and only ever calls `load(from:)`.
+- The A/B corpus's industry-term clips are `say` stand-ins. Real-voice
+  recordings are a BEA-641 step, so the 2.4% vs 11.4% figure is provisional
+  until they're in.
+- Still open: in-app memory footprint of Parakeet (spike RSS understates
+  Core ML), on-screen review of the menu/About, hands-on engine switching
+  (all BEA-641); whether to keep or delete the `parakeet-spike` target
+  (BEA-639).
 
 ## Spike (BEA-632) — verdict: GO
 
