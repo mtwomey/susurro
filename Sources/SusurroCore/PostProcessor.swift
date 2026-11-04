@@ -93,15 +93,34 @@ public final class PostProcessor: @unchecked Sendable {
 
         let enabledPunctuation = rules.punctuation.filter(\.isEnabled)
 
-        // 1. Strip stray commas/periods that whisper places around trigger words:
-        //    "quote, wow, end quote." -> "quote wow end quote"
+        // 0. Engines that punctuate and case their own output (Parakeet) end a
+        //    "sentence" at a spoken mid-sentence trigger: "Note colon. Buy milk."
+        //    The model's period is stripped in step 1, so its sentence-start
+        //    capital would otherwise survive: "Note: Buy milk". Lowercase it.
+        let midSentenceSays = enabledPunctuation
+            .filter { [",", ";", ":"].contains($0.insert) }
+            .map(\.say)
+        result = lowercaseAfterMidSentenceTrigger(result, says: midSentenceSays)
+
+        // 1. Strip stray punctuation that the engine places around trigger
+        //    words: "quote, wow, end quote." -> "quote wow end quote". After
+        //    the trigger, any of , . ? ! ; : goes — the trigger supplies the
+        //    symbol, so a punctuating engine's own one would double it
+        //    ("ready question mark?" -> "ready??"). Before it, only , and .
+        //    (the original whisper rule), so a real "?" ahead of "new line"
+        //    survives.
         var keywords: [String] = []
         if rules.options.pairQuotes { keywords += ["quote", "end quote"] }
         keywords += enabledPunctuation.map(\.say)
         for keyword in keywords {
             let escaped = NSRegularExpression.escapedPattern(for: keyword)
+            // Whisper sometimes renders the spoken quote itself as real quote
+            // marks around the triggers ("\"quote hi end quote\""); pairing
+            // would then double them. Only the quote triggers eat quote marks,
+            // so a genuine closing quote before e.g. "comma" survives.
+            let q = (keyword == "quote" || keyword == "end quote") ? "\"\u{201C}\u{201D}" : ""
             result = replace(in: result,
-                             pattern: "[,.]?\\s*\\b(\(escaped))\\b\\s*[,.]?",
+                             pattern: "[,.\(q)]?\\s*\\b(\(escaped))\\b\\s*[,.?!;:\(q)]?",
                              template: " $1 ")
         }
 
@@ -158,6 +177,33 @@ public final class PostProcessor: @unchecked Sendable {
         }
 
         return result
+    }
+
+    /// "comma. Then" -> "comma. then": a capitalised word directly after a
+    /// mid-sentence trigger plus sentence-ending punctuation was capitalised by
+    /// the engine's own sentence split, not because it's a name. "I" and its
+    /// contractions, and words with more than one capital (acronyms, "iOS",
+    /// "McDonald"), are left alone. Whisper rarely emits this shape, so this is
+    /// a no-op for most whisper output.
+    private func lowercaseAfterMidSentenceTrigger(_ text: String, says: [String]) -> String {
+        guard !says.isEmpty else { return text }
+        let alternatives = says.map { NSRegularExpression.escapedPattern(for: $0) }
+            .joined(separator: "|")
+        guard let regex = try? NSRegularExpression(
+            pattern: "\\b(?:\(alternatives))\\b\\s*[.?!]\\s+(\\p{Lu}[\\p{L}']*)",
+            options: [.caseInsensitive]
+        ) else { return text }
+        let ns = text as NSString
+        var result = text as NSString
+        for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)).reversed() {
+            let range = match.range(at: 1)
+            let word = ns.substring(with: range)
+            let uppercaseCount = word.filter(\.isUppercase).count
+            let isPronounI = word == "I" || word.hasPrefix("I'")
+            guard uppercaseCount == 1, !isPronounI else { continue }
+            result = result.replacingCharacters(in: range, with: word.prefix(1).lowercased() + word.dropFirst()) as NSString
+        }
+        return result as String
     }
 
     private func replace(in text: String, pattern: String, template: String) -> String {

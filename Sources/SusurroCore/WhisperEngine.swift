@@ -19,6 +19,7 @@ public enum WhisperError: Error, CustomStringConvertible {
 /// internally serialized — two quick dictations can't corrupt the context.
 public final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     public static let sampleRate = 16_000
+    public var kind: EngineKind { .whisper }
 
     private let ctx: OpaquePointer
     private let transcribeLock = NSLock()

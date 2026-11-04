@@ -17,6 +17,10 @@ public protocol TranscriptionEngine: AnyObject, Sendable {
     /// Sample rate, in Hz, that `transcribe(samples:)` expects.
     static var sampleRate: Int { get }
 
+    /// Which backend this is, so engine-specific output filtering
+    /// (`TranscriptFilter`) can be applied by the caller.
+    var kind: EngineKind { get }
+
     func transcribe(samples: [Float]) throws -> String
 }
 

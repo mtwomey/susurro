@@ -177,3 +177,28 @@ the deferred vocabulary feature would help.
   whisper path unchanged; an empty directory fails fast with no download.
   `swift test` 46/46 (4 new in `ParakeetEngineTests`). Hands-on menu switching
   in the running app is part of the BEA-641 dogfood.
+
+## Post-processing compatibility (BEA-636)
+
+Corpus: the 4 fixtures plus 9 `say`-generated dictations covering every
+default trigger, run through both engines with `susurro-cli --post <model>
+<clips>` (prints `raw<TAB>processed` using bundled default rules).
+
+- Parakeet keeps spoken triggers literal but glues its own punctuation on
+  ("question mark?", "comma,", "colon. Buy"). `PostProcessor` step 1 now strips
+  any of `, . ? ! ; :` *after* a trigger (before it, still only `, .`, so a real
+  "?" ahead of "new line" survives) — no more "ready??".
+- New step 0: a capitalised word after a mid-sentence trigger (`,` `;` `:`)
+  plus `.?!` is lowercased ("Note colon. Buy milk" -> "Note: buy milk"); "I",
+  I-contractions and multi-capital words (NASA, iOS) are kept.
+- Quote triggers also eat adjacent quote marks; fixes a pre-existing whisper
+  bug where `"quote hello there end quote"` became `" "hello there" "`.
+- `TranscriptFilter.stripHallucinations(_:engine:)` is engine-aware: the
+  `[...]` token strip is whisper-only (Parakeet has no such tokens), so
+  dictated brackets survive on Parakeet. `TranscriptionEngine` gained `kind`.
+- Smart Spacing needs no change: both engines return trimmed text, and the
+  leading-space decision only looks at what Susurro last typed.
+- Result: all 9 dictations produce the intended text on Parakeet; whisper
+  differs only by mishearings ("comma" -> "Kama") and its own ITN, not by
+  pipeline behaviour. Goldens: `Tests/SusurroTests/ParakeetPostProcessingTests.swift`.
+  `swift test` 53/53.

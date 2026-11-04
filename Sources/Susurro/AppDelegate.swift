@@ -627,7 +627,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 transcript = ""
             }
-            let raw = TranscriptFilter.stripHallucinations(transcript)
+            let raw = TranscriptFilter.stripHallucinations(transcript, engine: engine.kind)
             var text = raw.isEmpty ? "" : postProcessor.process(raw)
             if let cleaner, !text.isEmpty {
                 text = await cleaner.clean(text) ?? text

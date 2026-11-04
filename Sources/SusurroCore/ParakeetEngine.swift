@@ -27,6 +27,7 @@ public enum ParakeetEngineError: Error, CustomStringConvertible {
 ///   runs the async work in a detached task and blocks the caller until done.
 public final class ParakeetEngine: TranscriptionEngine, @unchecked Sendable {
     public static let sampleRate = 16_000
+    public var kind: EngineKind { .parakeet }
 
     /// FluidAudio rejects buffers under one second (`ASRError.invalidAudioData`);
     /// short push-to-talk taps are padded with silence up to this length.
