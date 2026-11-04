@@ -450,3 +450,17 @@ Finding: on multi-sentence recordings Parakeet spells out times and numbers in
 Matthew's voice ("three thirty PM", "nine forty five AM") wherever they fall,
 with or without padding. The 2 s gain applies to short dictations; long-form
 number formatting is a separate issue.
+
+## Number rules (BEA-646)
+Parakeet decides on each decode whether to write numbers as digits or words, because its training labels mix both. Sentences followed by more speech, and long dictations, often come out spelled out. `ParakeetNumberRules` runs on Parakeet output only. It rewrites three patterns: times with AM/PM ("nine forty five AM" -> "9:45 a.m."), a month followed by an ordinal ("january twenty second" -> "January 22nd") and "N percent" -> "N%". It also lowercases "A.M." to "a.m." and capitalises month names. It only acts when there is a clear cue, so "no one", "we may first" and "at nine" are left alone.
+
+Reference errors before -> after, with no clip worse on any set:
+- Stitched long voice clips: 139 -> 54
+- Long clips rebuilt with natural room noise, 300 ms gaps: 98 -> 43
+- Same, 150 ms gaps: 92 -> 45
+- Short voice set: 12 -> 9
+- `ab_engines.py` fixtures: 4 -> 4, with identical Parakeet output
+
+Not handled: money without the word "dollars", "four point two million", "the fifth to the ninth of June".
+
+Splitting at pauses was evaluated and deferred because it is too sensitive to its settings (see BEA-646).

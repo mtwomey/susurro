@@ -100,9 +100,13 @@ public final class ParakeetEngine: TranscriptionEngine, @unchecked Sendable {
         // Near or over 15 s the full pad doesn't fit in one window. If the final
         // mark is then missing, take only the mark from a fully padded pass and
         // keep this pass's words.
-        guard pad < Self.trailingSilenceSamples, Self.needsTerminalMark(text) else { return text }
+        guard pad < Self.trailingSilenceSamples, Self.needsTerminalMark(text) else {
+            return ParakeetNumberRules.apply(text)
+        }
         let marked = try pass(samples + [Float](repeating: 0, count: Self.trailingSilenceSamples))
-        return Self.withTerminalMark(text, from: marked)
+        // Number rules (BEA-646): Parakeet spells out times, dates and percents
+        // on some decodes; rewrite only the unambiguous ones.
+        return ParakeetNumberRules.apply(Self.withTerminalMark(text, from: marked))
     }
 
     static let terminalMarks: Set<Character> = [".", "?", "!"]
