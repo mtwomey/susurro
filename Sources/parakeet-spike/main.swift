@@ -18,9 +18,9 @@ guard !files.isEmpty else {
 
 do {
     let loadStart = Date()
-    let engine = try await ParakeetEngine.load()
+    let engine = try ParakeetEngine.downloadAndLoad()
     errPrint(String(format: "[model loaded in %.2fs from %@]", -loadStart.timeIntervalSinceNow,
-                    ParakeetEngine.modelDirectory.path))
+                    ParakeetEngine.fluidAudioCacheDirectory.path))
 
     for pass in 1...2 {
         for path in files {
@@ -28,7 +28,7 @@ do {
             let samples = try AudioFileLoader.loadSamples(url: url)
             let audioSeconds = Double(samples.count) / Double(WhisperEngine.sampleRate)
             let t0 = Date()
-            let text = try await engine.transcribe(samples: samples)
+            let text = try engine.transcribe(samples: samples)
             let elapsed = -t0.timeIntervalSinceNow
             errPrint(String(format: "[pass %d %@: %.2fs audio | %.3fs | %.1fx realtime]", pass,
                             url.lastPathComponent, audioSeconds, elapsed, audioSeconds / max(elapsed, 0.001)))

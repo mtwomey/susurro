@@ -136,7 +136,7 @@ the deferred vocabulary feature would help.
   value a released build wrote is a whisper catalog id and resolves to itself;
   nil or unknown values resolve to `small.en` without rewriting the default.
   Existing whisper users see no change.
-- The menu still lists whisper models only, until BEA-635 can load Parakeet.
+- (Superseded by BEA-635: the menu now lists Parakeet too.)
 - Tests: `Tests/SusurroTests/ModelManagerTests.swift` (12 unit tests: catalog,
   engine kinds, Intel gating, migration, file/directory storage, HF listing
   filter). One env-gated live test
@@ -144,3 +144,36 @@ the deferred vocabulary feature would help.
   2026-11-04: real download to a scratch directory, 1,464 progress callbacks up
   to 1.0, FluidAudio load + transcribe from the Susurro-owned directory, then
   delete. It took 157.6 s.
+
+## ParakeetEngine and live engine switching (BEA-635)
+
+- `ParakeetEngine: TranscriptionEngine` (`Sources/SusurroCore/ParakeetEngine.swift`)
+  loads with `AsrModels.load(from: <Susurro models dir>/parakeet-tdt-0.6b-v2-coreml,
+  version: .v2)` + `AsrManager.initialize` once at construction (warm), and
+  transcribes 16 kHz mono Float32 via `AsrManager.transcribe(_:source: .microphone)`.
+- `AsrManager` is a non-`Sendable` class with an async API; the engine is
+  `@unchecked Sendable`, serializes every call with an `NSLock`, and bridges
+  async to the protocol's sync `transcribe` with a detached task + semaphore.
+- Buffers under 1 s (FluidAudio throws `invalidAudioData`) are padded with
+  silence to 16,000 samples, so short push-to-talk taps still transcribe.
+- **Load never downloads.** `AsrModels.load(from:)` silently re-downloads
+  ~450 MB from Hugging Face into the directory's parent when files are missing
+  (observed on 2026-11-04). The engine checks `AsrModels.modelsExist(at:version:)`
+  first and throws `ParakeetEngineError.modelFilesMissing`, which the app shows
+  as "Model load failed".
+- `TranscriptionEngines.load(modelPath:engine:)` picks the engine from the
+  catalog `EngineKind` (the app passes it) or infers it from the path
+  (directory = Parakeet; the CLI relies on this, so
+  `susurro-cli <parakeet dir> clip.wav` works).
+- AppDelegate: the model menu lists every `available()` model, Parakeet
+  included. Selecting one sets `activeModelID` and calls `loadEngine()`, which
+  drops the current engine, loads the new one off-main and installs it. A
+  generation counter discards a load that finishes after a newer selection, so
+  fast whisper<->parakeet switching cannot leave the wrong engine active.
+  Transcription errors are logged and shown as a "Transcription failed" toast
+  instead of being swallowed.
+- Verified 2026-11-04 (M2 Pro): `susurro-cli` on the 4 fixtures + a 0.3 s clip
+  with Parakeet (cached load 19.8 s incl. Core ML compile, 0.07-0.12 s per clip);
+  whisper path unchanged; an empty directory fails fast with no download.
+  `swift test` 46/46 (4 new in `ParakeetEngineTests`). Hands-on menu switching
+  in the running app is part of the BEA-641 dogfood.

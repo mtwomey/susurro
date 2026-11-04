@@ -46,6 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var dictationMemory = DictationMemory()
     private let hotkey = HotkeyMonitor()
     private var engine: (any TranscriptionEngine)?
+    // Bumped on every loadEngine() call; a load that finishes after a newer
+    // one started (fast menu switching) is discarded instead of winning.
+    private var engineGeneration = 0
     private var axPollTimer: Timer?
 
     // Set once if the mic-permission callback reports denial. Sticky for the
@@ -228,9 +231,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func rebuildModelMenu() {
         modelMenu.removeAllItems()
-        // Parakeet is in the catalog (BEA-634) but only exposed once the app can
-        // load it (BEA-635); until then the menu lists whisper models only.
-        for model in ModelManager.available() where model.engine == .whisper {
+        // Whisper and Parakeet models share one list (Parakeet is Apple Silicon
+        // only; available() hides it elsewhere). Picking any entry hot-swaps
+        // the engine via loadEngine().
+        for model in ModelManager.available() {
             let item = NSMenuItem(title: "", action: #selector(modelMenuAction(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = model.id
@@ -383,27 +387,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func loadEngine() {
+        engineGeneration += 1
+        let generation = engineGeneration
         guard let path = models.activeModelPath() else {
             setStatus("Downloading model…")
             autoDownloadDefaultModel()
             return
         }
+        let kind = models.activeModel?.engine
+        // Drop the old engine first so whisper and Parakeet are never both
+        // resident; push-to-talk is ignored while engine is nil.
         engine = nil
         setStatus("Loading model…")
-        slog("loading model: \(path)")
+        slog("loading model (\(kind?.rawValue ?? "?")): \(path)")
         Task.detached(priority: .userInitiated) {
             do {
                 let start = Date()
-                let engine = try TranscriptionEngines.load(modelPath: path)
+                let engine = try TranscriptionEngines.load(modelPath: path, engine: kind)
                 slog(String(format: "model loaded in %.1fs", -start.timeIntervalSinceNow))
                 await MainActor.run { [weak self] in
-                    self?.engine = engine
-                    self?.clearStatus()
+                    guard let self, generation == self.engineGeneration else {
+                        slog("model load superseded, discarding")
+                        return
+                    }
+                    self.engine = engine
+                    self.clearStatus()
                 }
             } catch {
                 slog("model load FAILED: \(error)")
                 await MainActor.run { [weak self] in
-                    self?.setStatus("Model load failed")
+                    guard let self, generation == self.engineGeneration else { return }
+                    self.setStatus("Model load failed")
                 }
             }
         }
@@ -603,9 +617,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let postProcessor = postProcessor
         let cleaner = cleanupEnabled ? self.cleaner : nil
         Task.detached(priority: .userInitiated) {
-            let raw = TranscriptFilter.stripHallucinations(
-                (try? engine.transcribe(samples: samples)) ?? ""
-            )
+            let transcript: String
+            do {
+                transcript = try engine.transcribe(samples: samples)
+            } catch {
+                slog("ptt: transcription FAILED: \(error)")
+                await MainActor.run { [weak self] in
+                    self?.toast.show("Transcription failed — see log")
+                }
+                transcript = ""
+            }
+            let raw = TranscriptFilter.stripHallucinations(transcript)
             var text = raw.isEmpty ? "" : postProcessor.process(raw)
             if let cleaner, !text.isEmpty {
                 text = await cleaner.clean(text) ?? text

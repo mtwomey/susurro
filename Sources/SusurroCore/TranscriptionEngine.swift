@@ -26,9 +26,21 @@ public enum TranscriptionEngines {
     /// Sample rate shared by every engine (16 kHz mono).
     public static let sampleRate = WhisperEngine.sampleRate
 
-    /// Loads (warm) the engine for the model file at `modelPath`.
+    /// Loads (warm) the engine for the model at `modelPath`: a ggml file runs
+    /// on whisper.cpp, a Core ML model directory on Parakeet. Pass `engine`
+    /// when the catalog kind is known; otherwise it is inferred from the path.
     /// Blocking and potentially slow; call it off the main thread.
-    public static func load(modelPath: String) throws -> any TranscriptionEngine {
-        try WhisperEngine(modelPath: modelPath)
+    public static func load(modelPath: String, engine: EngineKind? = nil) throws -> any TranscriptionEngine {
+        switch engine ?? kind(ofPath: modelPath) {
+        case .whisper: return try WhisperEngine(modelPath: modelPath)
+        case .parakeet: return try ParakeetEngine(modelDirectory: URL(fileURLWithPath: modelPath, isDirectory: true))
+        }
+    }
+
+    /// Directory = Core ML (Parakeet), anything else = ggml file (whisper).
+    public static func kind(ofPath path: String) -> EngineKind {
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDir)
+        return exists && isDir.boolValue ? .parakeet : .whisper
     }
 }
