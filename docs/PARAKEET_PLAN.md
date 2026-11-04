@@ -372,8 +372,9 @@ Selected rows (full 160-row table: run the script; 2026-11-04, M2 Pro):
 - (a) Zero pad: no length from 50-1500 ms meets the bar. Every length changes clip1/clip2
   (and smoke at most lengths); marks need >= 450 ms.
 - (b) Frame-aligned (1280-sample) pads and low-level noise instead of zeros behave like (a).
-  The encoder output depends on the whole buffer (global attention over the
-  utterance), so no pad shape is body-neutral.
+  No pad shape tested is body-neutral. Likely cause (inferred, not traced in
+  FluidAudio's source): the encoder attends over the whole buffer, so any
+  appended audio can shift decoding of earlier words.
 - (d) Question-word heuristic: passes on this set, but guesses (imperatives such
   as "Do the dishes" would get "?"); the model's own judgment is preferred.
 - (c) Two-pass meets the bar at every pad from 450 to 1500 ms: the body is the
