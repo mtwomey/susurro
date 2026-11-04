@@ -275,3 +275,23 @@ load takes ~20 s, see BEA-635). Latency runs 1-2: whisper 2.61/2.53 s, Parakeet
 - Core ML's E5RT runtime prints a one-off `zero shape error` diagnostic to
   stdout on Parakeet's first inference in a process. The returned transcript
   is correct and the app ignores stdout; the harness strips the line.
+
+## Menu, Help and About (BEA-638)
+
+- Model menu is sectioned by engine: `ModelManager.menuSections()` groups
+  `available()` in `EngineKind` order, and AppDelegate adds an
+  `NSMenuItem.sectionHeader` per group ("Whisper (whisper.cpp)", "NVIDIA
+  Parakeet (Apple Silicon)") with a separator between. Intel Macs get no
+  empty Parakeet section.
+- Every entry shows id, size and note in all states, including "download"
+  and "downloading N%", so a model can be judged before downloading it.
+  Parakeet's note is "English, most accurate". large-v3-turbo's note is now
+  "most accurate Whisper, multilingual" so the two notes don't contradict.
+- HelpWindow "Model" describes both engine groups, the download/progress
+  behaviour and Apple Silicon gating. "About Susurro" mentions the GitHub
+  link and the Parakeet licence credit.
+- About shows `ModelManager.parakeetAttribution` (NVIDIA, CC-BY-4.0,
+  FluidInference Core ML conversion, FluidAudio Apache 2.0) whatever model
+  is active.
+- Tests: `menuSectionsGroupByEngine`, `parakeetMenuNoteAndAttribution`;
+  `make test` 55/55. The menu and About need an on-screen look in BEA-641.

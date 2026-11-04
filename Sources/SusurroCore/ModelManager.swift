@@ -8,6 +8,15 @@ public enum EngineKind: String, Sendable, Equatable, CaseIterable {
     /// FluidAudio Parakeet TDT: a directory of Core ML `.mlmodelc` bundles
     /// plus a vocabulary file. Apple Silicon only.
     case parakeet
+
+    /// Section header for this engine's group in the Model menu (and the
+    /// Help window's description of it).
+    public var menuSectionTitle: String {
+        switch self {
+        case .whisper: "Whisper (whisper.cpp)"
+        case .parakeet: "NVIDIA Parakeet (Apple Silicon)"
+        }
+    }
 }
 
 /// One downloadable model. `storageName` is a file name for whisper models
@@ -68,10 +77,10 @@ public final class ModelManager {
         .whisper("base.en", "ggml-base.en.bin", 142, "fast, light"),
         .whisper("small.en", "ggml-small.en.bin", 466, "default — best balance"),
         .whisper("medium.en", "ggml-medium.en.bin", 1500, "high accuracy, slower"),
-        .whisper("large-v3-turbo", "ggml-large-v3-turbo.bin", 1620, "best accuracy, multilingual"),
+        .whisper("large-v3-turbo", "ggml-large-v3-turbo.bin", 1620, "most accurate Whisper, multilingual"),
         CatalogModel(
             id: parakeetV2ID, engine: .parakeet, storageName: parakeetV2DirectoryName,
-            approxMB: 443, note: "Parakeet v2 — fast, accurate English (Apple Silicon)",
+            approxMB: 443, note: "English, most accurate",
             repo: "FluidInference/parakeet-tdt-0.6b-v2-coreml",
             requiredEntries: ["Preprocessor.mlmodelc", "Encoder.mlmodelc", "Decoder.mlmodelc",
                               "JointDecision.mlmodelc", "parakeet_vocab.json"]
@@ -86,6 +95,25 @@ public final class ModelManager {
     public static func available(appleSilicon: Bool = isAppleSilicon) -> [CatalogModel] {
         catalog.filter { $0.engine != .parakeet || appleSilicon }
     }
+
+    /// `available()` grouped by engine, in `EngineKind` declaration order and
+    /// catalog order within each group; engines with no available models are
+    /// omitted. Drives the sectioned Model menu.
+    public static func menuSections(appleSilicon: Bool = isAppleSilicon) -> [(engine: EngineKind, models: [CatalogModel])] {
+        let models = available(appleSilicon: appleSilicon)
+        return EngineKind.allCases.compactMap { kind in
+            let group = models.filter { $0.engine == kind }
+            return group.isEmpty ? nil : (kind, group)
+        }
+    }
+
+    /// Required CC-BY-4.0 attribution for the NVIDIA Parakeet model weights,
+    /// shown in About. FluidAudio's Core ML conversion keeps the same licence.
+    public static let parakeetAttribution = """
+        Parakeet TDT 0.6B v2 speech model © NVIDIA, licensed under CC-BY-4.0 \
+        (creativecommons.org/licenses/by/4.0). Core ML conversion by \
+        FluidInference; run via FluidAudio (Apache 2.0).
+        """
 
     public static var isAppleSilicon: Bool {
         #if arch(arm64)

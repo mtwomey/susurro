@@ -48,6 +48,23 @@ import Testing
         #expect(ModelManager.available(appleSilicon: true).contains { $0.engine == .parakeet })
     }
 
+    @Test func menuSectionsGroupByEngine() {
+        let arm = ModelManager.menuSections(appleSilicon: true)
+        #expect(arm.map(\.engine) == [.whisper, .parakeet])
+        #expect(arm[0].models.map(\.id) == ["tiny.en", "base.en", "small.en", "medium.en", "large-v3-turbo"])
+        #expect(arm[1].models.map(\.id) == [ModelManager.parakeetV2ID])
+        // Intel: no empty Parakeet section.
+        #expect(ModelManager.menuSections(appleSilicon: false).map(\.engine) == [.whisper])
+    }
+
+    @Test func parakeetMenuNoteAndAttribution() {
+        let parakeet = ModelManager.model(id: ModelManager.parakeetV2ID)!
+        #expect(parakeet.note == "English, most accurate")
+        #expect(parakeet.approxMB == 443)
+        #expect(ModelManager.parakeetAttribution.contains("NVIDIA"))
+        #expect(ModelManager.parakeetAttribution.contains("CC-BY-4.0"))
+    }
+
     // MARK: activeModelID migration
 
     @Test func resolveKeepsEveryKnownId() {

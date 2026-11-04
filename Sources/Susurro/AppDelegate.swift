@@ -231,27 +231,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func rebuildModelMenu() {
         modelMenu.removeAllItems()
-        // Whisper and Parakeet models share one list (Parakeet is Apple Silicon
-        // only; available() hides it elsewhere). Picking any entry hot-swaps
-        // the engine via loadEngine().
-        for model in ModelManager.available() {
-            let item = NSMenuItem(title: "", action: #selector(modelMenuAction(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = model.id
-
-            if let progress = models.downloadProgress[model.id] {
-                item.title = "\(model.id) — downloading \(Int(progress * 100))%"
-                item.isEnabled = false
-            } else if models.isDownloaded(model) {
-                let active = model.id == models.activeModelID
-                item.title = "\(model.id) (\(model.approxMB) MB) — \(model.note)"
-                item.state = active ? .on : .off
-            } else {
-                item.title = "\(model.id) (\(model.approxMB) MB) — download"
+        // One menu, sectioned by engine (Parakeet is Apple Silicon only;
+        // menuSections() omits it elsewhere). Picking any entry hot-swaps the
+        // engine via loadEngine(). Keep HelpWindow's "Model" text in sync.
+        for (index, section) in ModelManager.menuSections().enumerated() {
+            if index > 0 { modelMenu.addItem(.separator()) }
+            modelMenu.addItem(.sectionHeader(title: section.engine.menuSectionTitle))
+            for model in section.models {
+                modelMenu.addItem(modelMenuItem(for: model))
             }
-            modelMenu.addItem(item)
         }
         modelMenu.autoenablesItems = false
+    }
+
+    /// Size and note are shown in every state so an undownloaded model can be
+    /// judged before committing to the download.
+    private func modelMenuItem(for model: CatalogModel) -> NSMenuItem {
+        let item = NSMenuItem(title: "", action: #selector(modelMenuAction(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = model.id
+        let label = "\(model.id) (\(model.approxMB) MB) — \(model.note)"
+        if let progress = models.downloadProgress[model.id] {
+            item.title = "\(label) — downloading \(Int(progress * 100))%"
+            item.isEnabled = false
+        } else if models.isDownloaded(model) {
+            item.title = label
+            item.state = model.id == models.activeModelID ? .on : .off
+        } else {
+            item.title = "\(label) — download"
+        }
+        return item
     }
 
     @objc private func modelMenuAction(_ sender: NSMenuItem) {
@@ -680,7 +689,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         alert.messageText = "Susurro"
         let versionLine = build.map { "Version \(version) (\($0))" } ?? "Version \(version)"
-        alert.informativeText = "\(versionLine)\nMatthew Twomey"
+        // Model credit is required by CC-BY-4.0; shown regardless of the
+        // active model since the weights ship as a menu option.
+        alert.informativeText = "\(versionLine)\nMatthew Twomey\n\n\(ModelManager.parakeetAttribution)"
         // NSAlert's default icon falls back to a generic placeholder for
         // .accessory-policy (menu-bar-only, no Dock tile) apps like this one
         // — NSApp.applicationIconImage doesn't reliably resolve without a
