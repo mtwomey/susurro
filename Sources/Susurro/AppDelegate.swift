@@ -45,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Self-tracking, not an Accessibility read — see docs/SMART_SPACING_PLAN.md.
     private var dictationMemory = DictationMemory()
     private let hotkey = HotkeyMonitor()
-    private var engine: WhisperEngine?
+    private var engine: (any TranscriptionEngine)?
     private var axPollTimer: Timer?
 
     // Set once if the mic-permission callback reports denial. Sticky for the
@@ -392,7 +392,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Task.detached(priority: .userInitiated) {
             do {
                 let start = Date()
-                let engine = try WhisperEngine(modelPath: path)
+                let engine = try TranscriptionEngines.load(modelPath: path)
                 slog(String(format: "model loaded in %.1fs", -start.timeIntervalSinceNow))
                 await MainActor.run { [weak self] in
                     self?.engine = engine

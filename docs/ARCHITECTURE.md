@@ -18,8 +18,12 @@ Package.swift               SPM manifest; whisper linker flags defined once, sha
 Sources/
   CWhisper/                 C shim exposing vendor whisper.h to Swift (empty .c + header)
   SusurroCore/              Library shared by app, CLI, tests
-    WhisperEngine.swift       whisper.cpp C API wrapper; model loaded once, stays warm;
-                              transcribe() internally serialized (ctx not reentrant)
+    TranscriptionEngine.swift Engine protocol (warm load, 16 kHz in, serialized
+                              transcribe → trimmed text) + TranscriptionEngines.load
+                              factory; app and CLI depend on these only
+    WhisperEngine.swift       whisper.cpp C API wrapper (TranscriptionEngine); model
+                              loaded once, stays warm; transcribe() internally
+                              serialized (ctx not reentrant)
     AudioRecorder.swift       PRODUCTION capture: AVAudioEngine input tap → 16kHz mono
                               Float32 in RAM; peak-level callback; config-change
                               (mic unplugged) interruption callback
@@ -117,8 +121,9 @@ key up
 - All UI/menu/AppKit state: `@MainActor` (AppDelegate, panels, HotkeyMonitor).
 - Audio tap & CoreAudio callbacks arrive on audio threads; recorders are
   `@unchecked Sendable` with `NSLock`-guarded sample buffers.
-- Transcription runs in `Task.detached`; `WhisperEngine.transcribe` holds an
-  internal lock because whisper_context is not reentrant.
+- Transcription runs in `Task.detached` on an `any TranscriptionEngine`; the
+  protocol requires `Sendable` and serialized `transcribe`, so each engine
+  holds its own lock (`WhisperEngine`: whisper_context is not reentrant).
 - Event-tap C callback runs on the main runloop → `MainActor.assumeIsolated`.
 - Strict concurrency is ON (Swift 6). Compile errors around Sendable are the
   norm when touching this code; the patterns above are the house answers.

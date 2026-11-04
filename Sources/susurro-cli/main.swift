@@ -1,4 +1,4 @@
-// susurro-cli — whisper bridge test & corpus regression harness.
+// susurro-cli — transcription engine test & corpus regression harness.
 //
 // Usage: susurro-cli <model.bin> <audio-file> [audio-file...]
 
@@ -17,13 +17,13 @@ guard args.count >= 3 else {
 
 do {
     let loadStart = Date()
-    let engine = try WhisperEngine(modelPath: args[1])
+    let engine: any TranscriptionEngine = try TranscriptionEngines.load(modelPath: args[1])
     errPrint(String(format: "[model loaded in %.2fs]", -loadStart.timeIntervalSinceNow))
 
     for path in args.dropFirst(2) {
         let url = URL(fileURLWithPath: path)
         let samples = try AudioFileLoader.loadSamples(url: url)
-        let audioSeconds = Double(samples.count) / Double(WhisperEngine.sampleRate)
+        let audioSeconds = Double(samples.count) / Double(TranscriptionEngines.sampleRate)
 
         let t0 = Date()
         let text = try engine.transcribe(samples: samples)
