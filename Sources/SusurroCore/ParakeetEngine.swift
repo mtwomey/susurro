@@ -66,11 +66,24 @@ public final class ParakeetEngine: TranscriptionEngine, @unchecked Sendable {
 
     public static var fluidAudioCacheDirectory: URL { AsrModels.defaultCacheDirectory(for: .v2) }
 
-    /// Trailing silence for the punctuation pass (BEA-643). Parakeet drops the
-    /// final ?/. when the buffer ends right at the last word (push-to-talk);
-    /// 450-1500 ms of trailing silence restores it on every sweep clip, 1 s is
-    /// the middle of that range.
-    static let terminalPassPadSamples = 16_000
+    /// Trailing silence appended to every utterance (BEA-643). Push-to-talk
+    /// cuts the audio at the last word, which Parakeet never saw in training:
+    /// it drops the final ?/. and formats worse ("three thirty PM" for
+    /// "3:30 p.m."). 2 s of silence fixed both on Matthew's own recordings
+    /// (reference errors 31 -> 10, no clip worse, 14/14 final marks); see
+    /// docs/PARAKEET_PLAN.md.
+    static let trailingSilenceSamples = 32_000
+
+    /// FluidAudio decodes <= 240,000 samples (15 s) in one window and longer
+    /// audio through overlapping chunks. Padding never pushes an utterance
+    /// across that boundary.
+    static let singleWindowSamples = 240_000
+
+    /// Silence to append to an utterance of `count` samples.
+    static func trailingPad(for count: Int) -> Int {
+        guard count < singleWindowSamples else { return 0 }
+        return min(trailingSilenceSamples, singleWindowSamples - count)
+    }
 
     public func transcribe(samples: [Float]) throws -> String {
         guard !samples.isEmpty else { return "" }
@@ -82,15 +95,14 @@ public final class ParakeetEngine: TranscriptionEngine, @unchecked Sendable {
                 try await manager.value.transcribe(input, source: .microphone).text
             }.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        // Two-pass (BEA-643): the body always comes from the unpadded pass, so
-        // words and number/time formatting are exactly what they were. Padding
-        // changes the body unpredictably (hallucinated "Yeah.", "3.30" for
-        // "3:30"), so only the final mark is taken from a padded second pass,
-        // and only when the first pass has none.
-        let body = try pass(Self.padded(samples))
-        guard Self.needsTerminalMark(body) else { return body }
-        let padded = try pass(Self.padded(samples + [Float](repeating: 0, count: Self.terminalPassPadSamples)))
-        return Self.withTerminalMark(body, from: padded)
+        let pad = Self.trailingPad(for: samples.count)
+        let text = try pass(Self.padded(samples + [Float](repeating: 0, count: pad)))
+        // Near or over 15 s the full pad doesn't fit in one window. If the final
+        // mark is then missing, take only the mark from a fully padded pass and
+        // keep this pass's words.
+        guard pad < Self.trailingSilenceSamples, Self.needsTerminalMark(text) else { return text }
+        let marked = try pass(samples + [Float](repeating: 0, count: Self.trailingSilenceSamples))
+        return Self.withTerminalMark(text, from: marked)
     }
 
     static let terminalMarks: Set<Character> = [".", "?", "!"]

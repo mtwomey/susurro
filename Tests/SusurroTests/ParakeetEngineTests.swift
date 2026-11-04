@@ -66,4 +66,15 @@ import Testing
         #expect(ParakeetEngine.needsTerminalMark("Not yet"))
         #expect(ParakeetEngine.withTerminalMark("Done.", from: "Done?") == "Done.")
     }
+
+    @Test func utterancesGetTwoSecondsOfTrailingSilence() {
+        #expect(ParakeetEngine.trailingPad(for: 48_000) == 32_000)
+        #expect(ParakeetEngine.trailingPad(for: 1) == 32_000)
+    }
+
+    @Test func padNeverCrossesTheFifteenSecondWindow() {
+        #expect(ParakeetEngine.trailingPad(for: 220_000) == 20_000)
+        #expect(ParakeetEngine.trailingPad(for: 240_000) == 0)
+        #expect(ParakeetEngine.trailingPad(for: 300_000) == 0)
+    }
 }

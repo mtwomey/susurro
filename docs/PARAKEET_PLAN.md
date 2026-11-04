@@ -400,3 +400,36 @@ Parakeet pass on utterances without a final mark (~0.1 s on these clips; Parakee
 runs ~100x real time). Verified end to end with the shipped engine and no env
 vars: 26/26 clips token-identical to baseline, 16/16 terminal marks. Limit: `say`
 voices are a proxy for Matthew's voice; the dogfood test is the real check.
+
+### Revised decision (board review): single pass with 2 s of trailing silence
+
+The two-pass bar above scored candidates against the *unpadded output*. Scored
+against what was actually said (`scripts/pad_eval.py`, clips trimmed to the last
+word), the unpadded push-to-talk input is itself the weak case. The model was
+trained on audio with trailing silence, and cut-off audio formats worse.
+
+Matthew's own push-to-talk recordings (Fixtures/voice, 14 clips; v08 excluded,
+misread; recordings not committed):
+
+| pad | reference errors | clips better | clips worse | final ?/. |
+|---|---|---|---|---|
+| 0 (two-pass) | 31 | - | - | 14/14 |
+| 1000 ms | 29 | 2 | 1 | 14/14 |
+| 1500 ms | 14 | 5 | 1 | 14/14 |
+| 1750 ms | 10 | 5 | 1 | 14/14 |
+| **2000 ms** | **10** | **5** | **0** | **14/14** |
+| 2500 ms | 14 | 4 | 0 | 14/14 |
+| 3000 ms | 10 | 5 | 0 | 14/14 |
+
+Typical change on his voice: "three thirty PM on january twenty second" became
+"3:30 p.m. on January 22nd", and "six fifteen AM" became "6:15 a.m.". Synthetic
+`say` set + trimmed fixtures (40 clips): 50 -> 23 errors at 2 s; 1 clip worse
+("April 1st" -> "April 1").
+
+Shipped: `ParakeetEngine.trailingSilenceSamples = 32_000` (2 s), capped so an
+utterance never crosses FluidAudio's 15 s single window
+(`trailingPad(for:)`). When the cap shortens the pad and the final mark is
+missing, the two-pass mark fallback runs. Verified with the shipped build and
+no env vars: voice set 10 errors and 14/14 marks; 40-clip set 23 errors and
+40/40 marks; ab_engines Parakeet 2.4%, per clip identical to the baseline
+(clip1-3 are 15.00 s, so they get no pad).
