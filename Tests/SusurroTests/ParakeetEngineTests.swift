@@ -12,15 +12,26 @@ import Testing
     }
 
     @Test func shortBuffersArePaddedToOneSecond() {
-        let padded = ParakeetEngine.padded([Float](repeating: 0.5, count: 4_800))
+        let padded = ParakeetEngine.padded([Float](repeating: 0.5, count: 1_000))
         #expect(padded.count == 16_000)
-        #expect(padded[4_799] == 0.5)
-        #expect(padded[4_800] == 0)
+        #expect(padded[999] == 0.5)
+        #expect(padded[1_000] == 0)
     }
 
-    @Test func longBuffersAreUntouched() {
+    /// Trailing silence is always appended, even when the clip is already
+    /// over the one-second minimum, so Parakeet emits the final ? or .
+    @Test func everyBufferGetsTrailingSilence() {
         let samples = [Float](repeating: 0.1, count: 20_000)
-        #expect(ParakeetEngine.padded(samples) == samples)
+        let padded = ParakeetEngine.padded(samples)
+        #expect(padded.count == 20_000 + ParakeetEngine.trailingSilenceSamples)
+        #expect(Array(padded.prefix(20_000)) == samples)
+        #expect(padded.suffix(ParakeetEngine.trailingSilenceSamples).allSatisfy { $0 == 0 })
+    }
+
+    @Test func shortClipStillGetsFullTrailingSilence() {
+        // 0.5 s of speech + 0.5 s of silence = 1 s, exactly the minimum, above the minimum.
+        let padded = ParakeetEngine.padded([Float](repeating: 0.5, count: 8_000))
+        #expect(padded.count == 8_000 + ParakeetEngine.trailingSilenceSamples)
     }
 
     @Test func engineKindInferredFromPath() throws {

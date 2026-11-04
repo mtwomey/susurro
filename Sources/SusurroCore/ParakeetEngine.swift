@@ -33,6 +33,14 @@ public final class ParakeetEngine: TranscriptionEngine, @unchecked Sendable {
     /// short push-to-talk taps are padded with silence up to this length.
     static let minimumSamples = 16_000
 
+    /// Silence appended after every utterance. Push-to-talk ends the buffer
+    /// right at the last word, and Parakeet TDT only emits the final ? or .
+    /// once it hears trailing silence. Without it, a one-sentence dictation
+    /// comes out with no punctuation at all ("Hey are you coming to lunch
+    /// today"). Measured with susurro-cli: 0.5 s, 1 s and 2 s all restore the
+    /// mark; 0.5 s is used (0.3 s and 0.75 s each hallucinated a trailing "Yeah." on Fixtures/clip1.wav); it costs ~10 ms at Parakeet's speed.
+    static let trailingSilenceSamples = 8_000
+
     private let manager: ManagerBox
     private let lock = NSLock()
 
@@ -78,9 +86,11 @@ public final class ParakeetEngine: TranscriptionEngine, @unchecked Sendable {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Appends `trailingSilenceSamples` of silence, then pads to FluidAudio's
+    /// one-second minimum if the result is still shorter.
     static func padded(_ samples: [Float]) -> [Float] {
-        guard samples.count < minimumSamples else { return samples }
-        return samples + [Float](repeating: 0, count: minimumSamples - samples.count)
+        let target = max(samples.count + trailingSilenceSamples, minimumSamples)
+        return samples + [Float](repeating: 0, count: target - samples.count)
     }
 
     // MARK: - async -> sync bridge
