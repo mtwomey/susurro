@@ -202,3 +202,76 @@ default trigger, run through both engines with `susurro-cli --post <model>
   differs only by mishearings ("comma" -> "Kama") and its own ITN, not by
   pipeline behaviour. Goldens: `Tests/SusurroTests/ParakeetPostProcessingTests.swift`.
   `swift test` 53/53.
+
+## CLI engine selection and A/B accuracy harness (BEA-637)
+
+- `susurro-cli --engine whisper|parakeet [--model <path>] clips...` selects the
+  engine explicitly. Without `--model` it uses the app's managed model
+  (small.en for whisper, `parakeet-tdt-v2` for Parakeet, falling back to
+  FluidAudio's own cache dir); it never downloads. The old positional form
+  `susurro-cli <model.bin | parakeet-dir> clips...` still works. `--post` is
+  unchanged.
+- `scripts/ab_engines.py` runs both engines over `Fixtures/ab/references.tsv`
+  and prints the tables below (per-clip WER, totals, load/transcribe latency)
+  plus every transcript. WER normalisation: lowercase, punctuation stripped
+  (except inside numbers), whitespace split. Raw engine output, no
+  `PostProcessor`.
+- Corpus: the 4 existing `Fixtures/*.wav` (references hand-transcribed) and 6
+  new `Fixtures/ab/*.wav` clips: industry terms (Dagster, dbt, Snowflake,
+  Kubernetes, vLLM, LoRA, GGUF, llama.cpp, Kafka, Postgres, Terraform, Argo CD,
+  Helm) and near-homophone negative controls (`control-dexter.wav`: "Dexter"
+  only, must not become "Dagster"; `control-mixed.wav`: both words in one
+  sentence).
+- **Limit:** the new clips are macOS `say` (Samantha) stand-ins, not
+  Matthew's voice. An agent can't record his voice unattended, so recording
+  the same 6 sentences (same file names, overwrite) is a BEA-641 dogfood step.
+  Rerun `scripts/ab_engines.py` afterwards. TTS audio is clean and
+  well-enunciated, so the 0% rows on those clips are best-case numbers.
+
+### Results (M2 Pro, release build, 2026-11-04; 3 runs, WER identical, latency from run 3)
+
+| clip | words | whisper WER | parakeet WER |
+|---|---|---|---|
+| clip1.wav | 17 | 23.5% (4) | 0.0% (0) |
+| clip2.wav | 26 | 19.2% (5) | 11.5% (3) |
+| clip3.wav | 19 | 26.3% (5) | 0.0% (0) |
+| smoke.wav | 23 | 17.4% (4) | 0.0% (0) |
+| terms-dagster.wav | 13 | 0.0% (0) | 0.0% (0) |
+| control-dexter.wav | 12 | 0.0% (0) | 0.0% (0) |
+| terms-llm.wav | 17 | 0.0% (0) | 0.0% (0) |
+| terms-kafka.wav | 12 | 0.0% (0) | 0.0% (0) |
+| terms-infra.wav | 15 | 0.0% (0) | 0.0% (0) |
+| control-mixed.wav | 12 | 8.3% (1) | 8.3% (1) |
+| **total** | 166 | **11.4%** (19) | **2.4%** (4) |
+
+| engine | load (s) | transcribe total (s) | mean per clip (s) | audio (s) | realtime |
+|---|---|---|---|---|---|
+| whisper | 0.27 | 2.49 | 0.25 | 83.0 | 33x |
+| parakeet | 0.24 | 0.69 | 0.07 | 83.0 | 120x |
+
+Load time is a warm cache (Core ML already compiled; the first-ever Parakeet
+load takes ~20 s, see BEA-635). Latency runs 1-2: whisper 2.61/2.53 s, Parakeet
+0.78/0.69 s total transcribe time.
+
+### Findings
+
+- Parakeet: 4 errors in 166 words (2.4%) vs whisper small.en 19 (11.4%).
+  Parakeet was never worse than whisper on any clip, at about 3.5x lower
+  transcribe latency (0.07 vs 0.25 s per clip).
+- Most of whisper's errors on the existing corpus are formatting and
+  dictation-relevant: it turns spoken "quote ... end quote, comma" into
+  quote marks and drops the "comma" (clip3, 5 errors), and writes times as
+  "9.45am" / "3.30 pm" (clip1, smoke). Its real mishears: "unique socket",
+  "launch_dp list", "wispercpp" (clip2).
+- Parakeet's only misses on the existing corpus are clip2 jargon ("Launch DD
+  list", "whisper CPP"), which the deferred vocabulary feature would target.
+- Negative controls pass on both engines: "Dexter" is never rewritten to
+  "Dagster" or the reverse, and the mixed sentence keeps both. Both engines
+  write "Dagster daemon" as "Dagster demon"; that sentence is pinned as a
+  fixture for the vocabulary feature.
+- On TTS audio both engines get every industry term right (casing aside:
+  "DAGSTER", "LoRa", "LLAMA.cpp"; WER ignores case). This is the main thing
+  the real-voice recordings in BEA-641 need to confirm.
+- Core ML's E5RT runtime prints a one-off `zero shape error` diagnostic to
+  stdout on Parakeet's first inference in a process. The returned transcript
+  is correct and the app ignores stdout; the harness strips the line.

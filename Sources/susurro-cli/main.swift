@@ -1,11 +1,18 @@
 // susurro-cli — transcription engine test & corpus regression harness.
 //
-// Usage: susurro-cli [--post] <model.bin | parakeet-model-dir> <audio-file> [audio-file...]
+// Usage:
+//   susurro-cli [--post] <model.bin | parakeet-model-dir> <audio-file> [audio-file...]
+//   susurro-cli [--post] --engine whisper|parakeet [--model <path>] <audio-file> [audio-file...]
+//
+// --engine picks the backend explicitly. Without --model it uses the app's
+// managed model: small.en for whisper, parakeet-tdt-v2 for parakeet (falling
+// back to FluidAudio's own cache dir for Parakeet). It never downloads.
 //
 // --post also runs the app's output pipeline (engine-aware TranscriptFilter +
 // PostProcessor with the bundled default rules, never the user's rules.json)
 // and prints "raw<TAB>processed" per clip — the engine-comparison harness for
-// verbal punctuation (BEA-636).
+// verbal punctuation (BEA-636). Per-clip timing goes to stderr; scripts/ab_engines.py
+// (BEA-637) parses it for the A/B accuracy/latency report.
 
 import Foundation
 import SusurroCore
@@ -14,23 +21,69 @@ func errPrint(_ s: String) {
     FileHandle.standardError.write((s + "\n").data(using: .utf8)!)
 }
 
-let post = CommandLine.arguments.contains("--post")
-let args = CommandLine.arguments.filter { $0 != "--post" }
-guard args.count >= 3 else {
-    errPrint("usage: susurro-cli [--post] <model.bin | parakeet-model-dir> <audio-file> [audio-file...]")
-    exit(1)
+let usage = """
+usage: susurro-cli [--post] <model.bin | parakeet-model-dir> <audio-file> [audio-file...]
+       susurro-cli [--post] --engine whisper|parakeet [--model <path>] <audio-file> [audio-file...]
+"""
+
+var post = false
+var engineKind: EngineKind?
+var modelPath: String?
+var positional: [String] = []
+var it = CommandLine.arguments.dropFirst().makeIterator()
+while let a = it.next() {
+    switch a {
+    case "--post": post = true
+    case "--engine":
+        guard let v = it.next(), let k = EngineKind(rawValue: v) else {
+            errPrint("--engine must be one of: \(EngineKind.allCases.map(\.rawValue).joined(separator: ", "))")
+            exit(1)
+        }
+        engineKind = k
+    case "--model":
+        guard let v = it.next() else { errPrint(usage); exit(1) }
+        modelPath = v
+    case "-h", "--help": print(usage); exit(0)
+    default: positional.append(a)
+    }
 }
+
+/// The app's managed storage location for a catalog model (no download).
+@MainActor func managedPath(for kind: EngineKind) -> String? {
+    let id = kind == .parakeet ? ModelManager.parakeetV2ID : ModelManager.defaultModelID
+    guard let model = ModelManager.model(id: id) else { return nil }
+    let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    let candidates = [
+        support.appendingPathComponent("Susurro/models/\(model.storageName)").path,
+        // FluidAudio's own cache (BEA-632 spike) — handy on dev machines.
+        support.appendingPathComponent("FluidAudio/Models/\(ModelManager.parakeetV2DirectoryName)").path,
+    ]
+    return candidates.prefix(kind == .parakeet ? 2 : 1).first { FileManager.default.fileExists(atPath: $0) }
+}
+
+if engineKind == nil && modelPath == nil {
+    // Legacy form: first positional is the model path.
+    guard !positional.isEmpty else { errPrint(usage); exit(1) }
+    modelPath = positional.removeFirst()
+} else if modelPath == nil, let k = engineKind {
+    guard let p = managedPath(for: k) else {
+        errPrint("error: no downloaded \(k.rawValue) model found; pass --model <path> or download it in the app")
+        exit(1)
+    }
+    modelPath = p
+}
+guard let modelPath, !positional.isEmpty else { errPrint(usage); exit(1) }
 
 do {
     let loadStart = Date()
-    let engine: any TranscriptionEngine = try TranscriptionEngines.load(modelPath: args[1])
-    errPrint(String(format: "[model loaded in %.2fs]", -loadStart.timeIntervalSinceNow))
+    let engine: any TranscriptionEngine = try TranscriptionEngines.load(modelPath: modelPath, engine: engineKind)
+    errPrint(String(format: "[%@ model loaded in %.2fs: %@]", engine.kind.rawValue, -loadStart.timeIntervalSinceNow, modelPath))
 
     // Bundled defaults only: a fresh temp path makes PostProcessor seed it
     // from DefaultRules, so results don't depend on the developer's rules.json.
     let processor = PostProcessor(userRulesURL: FileManager.default.temporaryDirectory
         .appendingPathComponent("susurro-cli-\(UUID().uuidString)/rules.json"))
-    for path in args.dropFirst(2) {
+    for path in positional {
         let url = URL(fileURLWithPath: path)
         let samples = try AudioFileLoader.loadSamples(url: url)
         let audioSeconds = Double(samples.count) / Double(TranscriptionEngines.sampleRate)

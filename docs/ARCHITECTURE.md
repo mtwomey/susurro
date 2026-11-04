@@ -78,7 +78,7 @@ Sources/
     HelpWindow.swift          "Help…" menu item: non-modal window describing the hotkey,
                               every menu item, indicators, and required permissions —
                               keep it in sync when menu items change
-  susurro-cli/              transcription harness: susurro-cli <model> <wav...>
+  susurro-cli/              transcription harness: susurro-cli [--engine whisper|parakeet] <model> <wav...>
                               (fixture corpus regression + engine testing)
 Tests/SusurroTests/         golden tests (pinned to the Python predecessor's output),
                             filter tests, rules-config tests
@@ -190,4 +190,5 @@ with `activeModelPath()` (nil = genuinely no model) when messaging users.
 - Run `./build/Susurro.app/Contents/MacOS/Susurro` directly from a terminal to
   see stderr logs (via `open`/LaunchServices, NSLog content is TCC-redacted in
   `log show`).
-- `susurro-cli <model.bin> Fixtures/*.wav` — corpus regression in seconds.
+- `susurro-cli <model.bin> Fixtures/*.wav` — corpus regression in seconds;
+  `scripts/ab_engines.py` — whisper vs Parakeet WER/latency A/B over `Fixtures/ab/references.tsv`.

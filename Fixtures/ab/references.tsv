@@ -1,0 +1,11 @@
+# clip	reference (BEA-637). Fixtures/*.wav = existing corpus clips (references hand-transcribed); ab/*.wav = macOS `say` (Samantha) stand-ins until recorded in Matthew's voice
+clip1.wav	The invoice for $479.50 is due March 3rd. Call me at 555-212-3456 around 9:45 a.m.
+clip2.wav	Refactor the Python daemon to use a Unix socket instead of a named pipe, then update the launchd plist and rebuild whisper.cpp with Metal acceleration.
+clip3.wav	Add a comment that says quote this is a temporary workaround end quote, comma, then file a ticket, period.
+smoke.wav	The meeting is at 3:30 p.m. on January 22nd. The budget is $245,000, which is about 12% higher than last year.
+terms-dagster.wav	Deploy the Dagster pipeline to Kubernetes and rerun the dbt models in Snowflake.
+control-dexter.wav	My neighbor Dexter finally finished watching the TV show Dexter last night.
+terms-llm.wav	Spin up a vLLM server with LoRA adapters and quantize the model to GGUF for llama.cpp.
+terms-kafka.wav	The Kafka consumer is lagging because the Postgres read replica is behind.
+terms-infra.wav	Use Terraform and Argo CD to roll out the Helm charts to the staging cluster.
+control-mixed.wav	Dexter said the Dagster job failed, so Dexter restarted the Dagster daemon.
