@@ -66,16 +66,47 @@ public final class ParakeetEngine: TranscriptionEngine, @unchecked Sendable {
 
     public static var fluidAudioCacheDirectory: URL { AsrModels.defaultCacheDirectory(for: .v2) }
 
+    /// Trailing silence for the punctuation pass (BEA-643). Parakeet drops the
+    /// final ?/. when the buffer ends right at the last word (push-to-talk);
+    /// 450-1500 ms of trailing silence restores it on every sweep clip, 1 s is
+    /// the middle of that range.
+    static let terminalPassPadSamples = 16_000
+
     public func transcribe(samples: [Float]) throws -> String {
         guard !samples.isEmpty else { return "" }
-        let input = Self.padded(samples)
         let manager = self.manager
         lock.lock()
         defer { lock.unlock() }
-        let text = try Self.runBlocking {
-            try await manager.value.transcribe(input, source: .microphone).text
+        let pass: ([Float]) throws -> String = { input in
+            try Self.runBlocking {
+                try await manager.value.transcribe(input, source: .microphone).text
+            }.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Two-pass (BEA-643): the body always comes from the unpadded pass, so
+        // words and number/time formatting are exactly what they were. Padding
+        // changes the body unpredictably (hallucinated "Yeah.", "3.30" for
+        // "3:30"), so only the final mark is taken from a padded second pass,
+        // and only when the first pass has none.
+        let body = try pass(Self.padded(samples))
+        guard Self.needsTerminalMark(body) else { return body }
+        let padded = try pass(Self.padded(samples + [Float](repeating: 0, count: Self.terminalPassPadSamples)))
+        return Self.withTerminalMark(body, from: padded)
+    }
+
+    static let terminalMarks: Set<Character> = [".", "?", "!"]
+
+    static func needsTerminalMark(_ text: String) -> Bool {
+        guard let last = text.last else { return false }
+        return !terminalMarks.contains(last)
+    }
+
+    /// `body` plus the final ?/./! of `paddedText`, if it has one; the padded
+    /// pass's words are never used.
+    static func withTerminalMark(_ body: String, from paddedText: String) -> String {
+        guard needsTerminalMark(body),
+              let mark = paddedText.trimmingCharacters(in: .whitespacesAndNewlines).last,
+              terminalMarks.contains(mark) else { return body }
+        return body + String(mark)
     }
 
     static func padded(_ samples: [Float]) -> [Float] {

@@ -41,4 +41,29 @@ import Testing
         }
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).isEmpty)
     }
+
+    // MARK: - two-pass terminal punctuation (BEA-643)
+
+    @Test func onlyTheFinalMarkComesFromThePaddedPass() {
+        // Padded pass reformats the body ("3.30", hallucinated "Yeah."); only its mark is used.
+        #expect(ParakeetEngine.withTerminalMark("The meeting is at 3:30 p.m", from: "The meeting is at 3.30 p.m. Yeah.")
+                == "The meeting is at 3:30 p.m.")
+        #expect(ParakeetEngine.withTerminalMark("Hey are you coming to lunch today", from: "Hey are you coming to lunch today?")
+                == "Hey are you coming to lunch today?")
+        #expect(ParakeetEngine.withTerminalMark("Watch out", from: "Watch out! ") == "Watch out!")
+    }
+
+    @Test func bodyUnchangedWhenPaddedPassHasNoMark() {
+        #expect(ParakeetEngine.withTerminalMark("Let me know", from: "Let me know") == "Let me know")
+        #expect(ParakeetEngine.withTerminalMark("Let me know", from: "") == "Let me know")
+        #expect(ParakeetEngine.withTerminalMark("Let me know", from: "Let me know,") == "Let me know")
+    }
+
+    @Test func alreadyPunctuatedTextSkipsTheSecondPass() {
+        #expect(!ParakeetEngine.needsTerminalMark("Done."))
+        #expect(!ParakeetEngine.needsTerminalMark("Really?"))
+        #expect(!ParakeetEngine.needsTerminalMark(""))
+        #expect(ParakeetEngine.needsTerminalMark("Not yet"))
+        #expect(ParakeetEngine.withTerminalMark("Done.", from: "Done?") == "Done.")
+    }
 }

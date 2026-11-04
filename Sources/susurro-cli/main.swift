@@ -74,6 +74,28 @@ if engineKind == nil && modelPath == nil {
 }
 guard let modelPath, !positional.isEmpty else { errPrint(usage); exit(1) }
 
+/// Dev-only trailing pad for the end-of-sentence punctuation sweep (BEA-643),
+/// so pad lengths can be compared without a rebuild per value. Unset = no pad.
+///   SUSURRO_DEV_PAD_MS     trailing pad length in ms
+///   SUSURRO_DEV_PAD_ALIGN  round the padded total up to a multiple of N samples
+///   SUSURRO_DEV_PAD_NOISE  pad with seeded uniform noise of this amplitude instead of zeros
+func devPadded(_ samples: [Float]) -> [Float] {
+    let env = ProcessInfo.processInfo.environment
+    let ms = Double(env["SUSURRO_DEV_PAD_MS"] ?? "") ?? 0
+    let align = Int(env["SUSURRO_DEV_PAD_ALIGN"] ?? "") ?? 0
+    let noise = Float(env["SUSURRO_DEV_PAD_NOISE"] ?? "") ?? 0
+    var count = Int(ms * Double(TranscriptionEngines.sampleRate) / 1000)
+    if align > 0 { count += (align - (samples.count + count) % align) % align }
+    guard count > 0 else { return samples }
+    var seed: UInt64 = 0x9E37_79B9_7F4A_7C15
+    let pad = (0..<count).map { _ -> Float in
+        guard noise > 0 else { return 0 }
+        seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+        return (Float(seed >> 40) / Float(1 << 24) * 2 - 1) * noise
+    }
+    return samples + pad
+}
+
 do {
     let loadStart = Date()
     let engine: any TranscriptionEngine = try TranscriptionEngines.load(modelPath: modelPath, engine: engineKind)
@@ -85,7 +107,7 @@ do {
         .appendingPathComponent("susurro-cli-\(UUID().uuidString)/rules.json"))
     for path in positional {
         let url = URL(fileURLWithPath: path)
-        let samples = try AudioFileLoader.loadSamples(url: url)
+        let samples = devPadded(try AudioFileLoader.loadSamples(url: url))
         let audioSeconds = Double(samples.count) / Double(TranscriptionEngines.sampleRate)
 
         let t0 = Date()

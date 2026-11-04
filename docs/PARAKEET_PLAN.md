@@ -332,3 +332,57 @@ load takes ~20 s, see BEA-635). Latency runs 1-2: whisper 2.61/2.53 s, Parakeet
   is active.
 - Tests: `menuSectionsGroupByEngine`, `parakeetMenuNoteAndAttribution`;
   `make test` 55/55. The menu and About need an on-screen look in BEA-641.
+
+## End-of-sentence punctuation (BEA-643) — decision: two-pass terminal mark
+
+Problem: Parakeet drops the final ?/. when the buffer ends at the last word
+(push-to-talk), so one-sentence dictations had no end punctuation. Trailing
+silence restores the mark but changes the body, non-monotonically with pad length.
+
+Bar (board): per-clip WER (punctuation-insensitive) <= the unpadded baseline on
+EVERY clip, no new words and no number/time formatting changes (normalised tokens
+identical to baseline), terminal ?/. correct on >= 90% of push-to-talk clips.
+
+Harness: `scripts/pad_sweep.py` runs susurro-cli over Fixtures/ab (10 clips) +
+Fixtures/punct (16 `say` clips, 8 questions / 8 statements, trailing silence
+trimmed to 10 ms after the last word) once per candidate, using the dev-only
+`SUSURRO_DEV_PAD_MS` / `SUSURRO_DEV_PAD_ALIGN` / `SUSURRO_DEV_PAD_NOISE` env vars
+in susurro-cli (no rebuild per value). Fresh unpadded baseline (87e1ff6):
+ab_engines.py Parakeet 2.4% (4/166), identical to BEA-637; 0/16 terminal marks.
+
+Selected rows (full 160-row table: run the script; 2026-11-04, M2 Pro):
+
+| candidate | WER errors (26 clips) | per-clip WER regressions | token changes vs baseline | terminal ?/. | meets bar |
+|---|---|---|---|---|---|
+| baseline | 5 | - | 0  | 0/16 (0%) | no |
+| a:zero 400ms | 12 | clip1.wav 0->3, clip2.wav 3->5, smoke.wav 0->2 | 3 clip1.wav, clip2.wav, smoke.wav | 14/16 (88%) | no |
+| a:zero 450ms | 11 | clip1.wav 0->2, clip2.wav 3->5, smoke.wav 0->2 | 3 clip1.wav, clip2.wav, smoke.wav | 16/16 (100%) | no |
+| a:zero 500ms | 12 | clip1.wav 0->2, clip2.wav 3->5, smoke.wav 0->3 | 3 clip1.wav, clip2.wav, smoke.wav | 16/16 (100%) | no |
+| a:zero 1000ms | 12 | clip1.wav 0->2, clip2.wav 3->5, smoke.wav 0->3 | 3 clip1.wav, clip2.wav, smoke.wav | 16/16 (100%) | no |
+| a:zero 1500ms | 10 | clip1.wav 0->2, clip2.wav 3->5, smoke.wav 0->1 | 3 clip1.wav, clip2.wav, smoke.wav | 16/16 (100%) | no |
+| b:zero 1000ms align1280 | 12 | clip1.wav 0->2, clip2.wav 3->5, smoke.wav 0->3 | 3 clip1.wav, clip2.wav, smoke.wav | 16/16 (100%) | no |
+| b:noise0.0003 1000ms | 12 | clip1.wav 0->2, clip2.wav 3->5, smoke.wav 0->3 | 3 clip1.wav, clip2.wav, smoke.wav | 16/16 (100%) | no |
+| b:noise0.0003 1500ms | 9 | clip1.wav 0->2, clip2.wav 3->5 | 2 clip1.wav, clip2.wav | 16/16 (100%) | no |
+| d:fallback | 5 | - | 0  | 16/16 (100%) | YES |
+| c:two-pass zero 400ms | 5 | - | 0  | 14/16 (88%) | no |
+| c:two-pass zero 450ms | 5 | - | 0  | 16/16 (100%) | YES |
+| c:two-pass zero 1000ms | 5 | - | 0  | 16/16 (100%) | YES |
+| c:two-pass zero 1500ms | 5 | - | 0  | 16/16 (100%) | YES |
+
+- (a) Zero pad: no length from 50-1500 ms meets the bar. Every length changes clip1/clip2
+  (and smoke at most lengths); marks need >= 450 ms.
+- (b) Frame-aligned (1280-sample) pads and low-level noise instead of zeros behave like (a).
+  The encoder output depends on the whole buffer (global attention over the
+  utterance), so no pad shape is body-neutral.
+- (d) Question-word heuristic: passes on this set, but guesses (imperatives such
+  as "Do the dishes" would get "?"); the model's own judgment is preferred.
+- (c) Two-pass meets the bar at every pad from 450 to 1500 ms: the body is the
+  unpadded transcript byte-for-byte, only a final ?/./! is taken from a padded
+  pass, and the second pass runs only when the first has no final mark.
+
+Shipped: (c) with 1000 ms (middle of the passing range), in
+`ParakeetEngine.transcribe` (`withTerminalMark`, unit-tested). Cost: one extra
+Parakeet pass on utterances without a final mark (~0.1 s on these clips; Parakeet
+runs ~100x real time). Verified end to end with the shipped engine and no env
+vars: 26/26 clips token-identical to baseline, 16/16 terminal marks. Limit: `say`
+voices are a proxy for Matthew's voice; the dogfood test is the real check.
