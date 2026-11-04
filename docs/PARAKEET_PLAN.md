@@ -433,3 +433,20 @@ missing, the two-pass mark fallback runs. Verified with the shipped build and
 no env vars: voice set 10 errors and 14/14 marks; 40-clip set 23 errors and
 40/40 marks; ab_engines Parakeet 2.4%, per clip identical to the baseline
 (clip1-3 are 15.00 s, so they get no pad).
+
+### Dictations near or over 15 s
+
+Over 15 s, FluidAudio splits the audio into ~15 s windows that overlap by 2 s and
+merges the results (ChunkProcessor). Susurro adds no silence; if the merged text
+has no final mark, a second pass with 2 s of silence supplies only the mark. From
+13 s to 15 s, the silence is shortened to fit in one window.
+
+Checked on 11 recordings stitched from Matthew's voice clips (0.35 s gaps): 6 of
+13.4-14.8 s and 5 of 12.7-43.5 s. The shipped build ended 11/11 with the correct
+mark and had 139 reference errors. Forcing a full 2 s pad on these clips gave 134
+errors but 10/11 marks ("tomorrow." for "tomorrow?"), and on L1 it merged two
+sentences into one. So the shipped behaviour stays as it is.
+Finding: on multi-sentence recordings Parakeet spells out times and numbers in
+Matthew's voice ("three thirty PM", "nine forty five AM") wherever they fall,
+with or without padding. The 2 s gain applies to short dictations; long-form
+number formatting is a separate issue.
