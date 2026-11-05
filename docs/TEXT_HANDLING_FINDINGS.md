@@ -186,8 +186,10 @@ VS Code (editor), Terminal (prompt) — do these four steps and note what appear
 3. Type a space yourself, then dictate "it was late". Expect exactly one space, lower-case "it".
 4. Type a full stop, then dictate "next sentence". Expect ` Next sentence`.
 Then clear the field (or send the Slack message with Return) and repeat step 1: no leading space.
-Per-app coverage comes from the log (no field text in it):
-`log show --last 30m --predicate 'eventMessage CONTAINS "context source"' --style compact`
+Per-app coverage comes from `~/Library/Logs/Susurro/text-handling.log`: one line per dictation
+with the app, the context source and the AX read path (lengths/positions only, never text).
+The unified log does not keep Susurro's NSLog lines, so `log show` cannot be used for this.
+Note: the engines end sentences with a full stop, so step 1 gives `Hello there.`
 
 ### 6.1 Per-app coverage (to be filled from the device run)
 | App | source seen | steps 1-4 OK | Notes |
@@ -198,3 +200,5 @@ Per-app coverage comes from the log (no field text in it):
 | Slack | | | |
 | VS Code | | | |
 | Terminal | | | |
+| Zen (Gecko) | AX (step 2 lower-cased after the user deleted a full stop, which memory cannot see) | 1, 2, 4 OK; 3 double space | Board run 2026-11-04. Likely cause: Gecko's value omits the typed trailing space while the caret sits past it; handled in 72de228 (caret past value end = trailing space), retest pending |
+| Warp | self-tracked fallback (probe: AXTextArea, whole buffer, no caret) | 1, 4 OK; 2 capital "And" after a deleted full stop; 3 double space | Fallback cannot see user edits; board decision pending (accept / buffer-end heuristic / plain per-app rule) |
