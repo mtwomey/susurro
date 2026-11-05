@@ -45,7 +45,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Self-tracking, not an Accessibility read — see docs/SMART_SPACING_PLAN.md.
     private var dictationMemory = DictationMemory()
     private let hotkey = HotkeyMonitor()
-    private var engine: WhisperEngine?
+    private var engine: (any TranscriptionEngine)?
+    // Bumped on every loadEngine() call; a load that finishes after a newer
+    // one started (fast menu switching) is discarded instead of winning.
+    private var engineGeneration = 0
+    /// Why there's no engine right now, for user-visible feedback. The menu
+    /// status item alone is invisible unless the menu is open, and a cold
+    /// Parakeet load (Core ML compile) takes ~20 s, so without this the app
+    /// looked broken: push-to-talk silently did nothing.
+    private enum EngineState { case loading, downloading, failed, ready }
+    private var engineState: EngineState = .loading {
+        didSet { updateStatusIcon() }
+    }
+    /// A load slower than this gets a "still loading" toast and a "ready" toast.
+    private static let slowLoadThreshold: TimeInterval = 1.5
     private var axPollTimer: Timer?
 
     // Set once if the mic-permission callback reports denial. Sticky for the
@@ -228,24 +241,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func rebuildModelMenu() {
         modelMenu.removeAllItems()
-        for model in ModelManager.catalog {
-            let item = NSMenuItem(title: "", action: #selector(modelMenuAction(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = model.id
-
-            if let progress = models.downloadProgress[model.id] {
-                item.title = "\(model.id) — downloading \(Int(progress * 100))%"
-                item.isEnabled = false
-            } else if models.isDownloaded(model) {
-                let active = model.id == models.activeModelID
-                item.title = "\(model.id) (\(model.approxMB) MB) — \(model.note)"
-                item.state = active ? .on : .off
-            } else {
-                item.title = "\(model.id) (\(model.approxMB) MB) — download"
+        // One menu, sectioned by engine (Parakeet is Apple Silicon only;
+        // menuSections() omits it elsewhere). Picking any entry hot-swaps the
+        // engine via loadEngine(). Keep HelpWindow's "Model" text in sync.
+        for (index, section) in ModelManager.menuSections().enumerated() {
+            if index > 0 { modelMenu.addItem(.separator()) }
+            modelMenu.addItem(.sectionHeader(title: section.engine.menuSectionTitle))
+            for model in section.models {
+                modelMenu.addItem(modelMenuItem(for: model))
             }
-            modelMenu.addItem(item)
         }
         modelMenu.autoenablesItems = false
+    }
+
+    /// Size and note are shown in every state so an undownloaded model can be
+    /// judged before committing to the download.
+    private func modelMenuItem(for model: CatalogModel) -> NSMenuItem {
+        let item = NSMenuItem(title: "", action: #selector(modelMenuAction(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = model.id
+        let label = "\(model.id) (\(model.approxMB) MB) — \(model.note)"
+        if let progress = models.downloadProgress[model.id] {
+            item.title = "\(label) — downloading \(Int(progress * 100))%"
+            item.isEnabled = false
+        } else if models.isDownloaded(model) {
+            item.title = label
+            item.state = model.id == models.activeModelID ? .on : .off
+        } else {
+            item.title = "\(label) — download"
+        }
+        return item
     }
 
     @objc private func modelMenuAction(_ sender: NSMenuItem) {
@@ -324,6 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.rebuildModelMenu()
             } catch {
                 slog("auto-download failed: \(error)")
+                self?.engineState = .failed
                 self?.setStatus("Model download failed — retry from the Model menu")
                 self?.notify("Model download failed",
                              "Open the Model menu to retry. \(error.localizedDescription)")
@@ -373,6 +399,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// ready and available via the push-to-talk hotkey. Never clears a
     /// mic-access-denied warning (see setStatus) — that's sticky for the
     /// rest of the run.
+    /// Menu bar icon reflects engine readiness, so a loading app doesn't look
+    /// identical to a ready one.
+    private func updateStatusIcon() {
+        guard let button = statusItem?.button else { return }
+        let (symbol, tip): (String, String) = switch engineState {
+        case .ready: ("waveform.circle", "Susurro")
+        case .loading: ("hourglass.circle", "Susurro — loading model…")
+        case .downloading: ("arrow.down.circle", "Susurro — downloading model…")
+        case .failed: ("exclamationmark.circle", "Susurro — model load failed")
+        }
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+        button.toolTip = tip
+    }
+
     private func clearStatus() {
         guard !micAccessDenied else { return }
         if let menu = statusItem.menu, menu.items.contains(recordItem) {
@@ -381,27 +421,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func loadEngine() {
+        engineGeneration += 1
+        let generation = engineGeneration
         guard let path = models.activeModelPath() else {
             setStatus("Downloading model…")
+            engineState = .downloading
             autoDownloadDefaultModel()
             return
         }
+        let kind = models.activeModel?.engine
+        // Drop the old engine first so whisper and Parakeet are never both
+        // resident; push-to-talk is ignored while engine is nil.
         engine = nil
         setStatus("Loading model…")
-        slog("loading model: \(path)")
+        engineState = .loading
+        slog("loading model (\(kind?.rawValue ?? "?")): \(path)")
+        let modelName = models.activeModelID
+        let loadStart = Date()
+        // Only announce slow loads, so the usual sub-second load stays silent.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.slowLoadThreshold) { [weak self] in
+            guard let self, generation == self.engineGeneration, self.engine == nil,
+                  self.engineState == .loading else { return }
+            self.toast.show(
+                "Loading \(modelName)… the first load after install can take ~20 s",
+                seconds: 6
+            )
+        }
         Task.detached(priority: .userInitiated) {
             do {
                 let start = Date()
-                let engine = try WhisperEngine(modelPath: path)
+                let engine = try TranscriptionEngines.load(modelPath: path, engine: kind)
                 slog(String(format: "model loaded in %.1fs", -start.timeIntervalSinceNow))
                 await MainActor.run { [weak self] in
-                    self?.engine = engine
-                    self?.clearStatus()
+                    guard let self, generation == self.engineGeneration else {
+                        slog("model load superseded, discarding")
+                        return
+                    }
+                    self.engine = engine
+                    self.engineState = .ready
+                    self.clearStatus()
+                    if -loadStart.timeIntervalSinceNow >= Self.slowLoadThreshold {
+                        self.toast.show("✓ \(modelName) ready — hold \(self.hotkey.key.title) to dictate")
+                    }
                 }
             } catch {
                 slog("model load FAILED: \(error)")
                 await MainActor.run { [weak self] in
-                    self?.setStatus("Model load failed")
+                    guard let self, generation == self.engineGeneration else { return }
+                    self.engineState = .failed
+                    self.setStatus("Model load failed")
                 }
             }
         }
@@ -582,7 +650,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func pttPressed() {
-        guard engine != nil, !recorder.isRecording else { return }
+        guard !recorder.isRecording else { return }
+        guard engine != nil else {
+            // Never ignore the key silently: say why nothing is happening.
+            switch engineState {
+            case .loading:
+                toast.show("Model still loading — dictation will be ready in a few seconds")
+            case .downloading:
+                toast.show("Model still downloading — dictation starts when it's ready")
+            case .failed:
+                toast.show("Model failed to load — pick a model from the Susurro menu")
+            case .ready:
+                break
+            }
+            return
+        }
         do {
             try recorder.start()
             slog("ptt: recording")
@@ -601,9 +683,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let postProcessor = postProcessor
         let cleaner = cleanupEnabled ? self.cleaner : nil
         Task.detached(priority: .userInitiated) {
-            let raw = TranscriptFilter.stripHallucinations(
-                (try? engine.transcribe(samples: samples)) ?? ""
-            )
+            let transcript: String
+            do {
+                transcript = try engine.transcribe(samples: samples)
+            } catch {
+                slog("ptt: transcription FAILED: \(error)")
+                await MainActor.run { [weak self] in
+                    self?.toast.show("Transcription failed — see log")
+                }
+                transcript = ""
+            }
+            let raw = TranscriptFilter.stripHallucinations(transcript, engine: engine.kind)
             var text = raw.isEmpty ? "" : postProcessor.process(raw)
             if let cleaner, !text.isEmpty {
                 text = await cleaner.clean(text) ?? text
@@ -656,7 +746,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         alert.messageText = "Susurro"
         let versionLine = build.map { "Version \(version) (\($0))" } ?? "Version \(version)"
-        alert.informativeText = "\(versionLine)\nMatthew Twomey"
+        // Model credit is required by CC-BY-4.0; shown regardless of the
+        // active model since the weights ship as a menu option.
+        alert.informativeText = "\(versionLine)\nMatthew Twomey\n\n\(ModelManager.parakeetAttribution)"
         // NSAlert's default icon falls back to a generic placeholder for
         // .accessory-policy (menu-bar-only, no Dock tile) apps like this one
         // — NSApp.applicationIconImage doesn't reliably resolve without a

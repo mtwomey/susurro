@@ -1,0 +1,16 @@
+# clip	reference (BEA-643). Matthew's own push-to-talk recordings (scripts/record_voice_clips.py); trimmed to the last word at eval time.
+v01.wav	The meeting is at 3:30 p.m. on January 22nd.
+v02.wav	Can you call me at 9:45 a.m. tomorrow?
+v03.wav	The invoice for $1,250 is due on March 3rd.
+v04.wav	Our flight leaves at 6:15 a.m. on Friday, October 10th.
+v05.wav	Revenue grew 18% to $4.2 million last quarter.
+v06.wav	What time does the train leave on Saturday?
+v07.wav	Set a reminder for 11:00 a.m. on December 1st.
+v08.wav	The server rebooted at 2:47 a.m. and was down for 12 minutes.
+v09.wav	Did you send the report to the whole team?
+v10.wav	The rent goes up by 3% starting on April 1st.
+v11.wav	Deploy the Dagster pipeline and rerun the dbt models in Snowflake.
+v12.wav	I'll be in Chicago from the 5th to the 9th of June.
+v13.wav	How long will the migration take?
+v14.wav	Thanks for sending that over so quickly.
+v15.wav	Let me know what you think.

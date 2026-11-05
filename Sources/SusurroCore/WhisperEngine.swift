@@ -13,12 +13,13 @@ public enum WhisperError: Error, CustomStringConvertible {
     }
 }
 
-/// In-process whisper.cpp engine. Loads the model once and stays warm.
+/// In-process whisper.cpp `TranscriptionEngine`. Loads the model once and stays warm.
 /// Expects 16 kHz mono Float32 samples.
 /// @unchecked Sendable: whisper_context is not reentrant, so transcribe() is
 /// internally serialized — two quick dictations can't corrupt the context.
-public final class WhisperEngine: @unchecked Sendable {
+public final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     public static let sampleRate = 16_000
+    public var kind: EngineKind { .whisper }
 
     private let ctx: OpaquePointer
     private let transcribeLock = NSLock()

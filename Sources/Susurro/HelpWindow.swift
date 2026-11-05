@@ -43,11 +43,23 @@ final class HelpWindowController {
 
         heading("Model")
         body("""
-        Choose the speech-recognition model. Smaller models are faster but \
-        less accurate; small.en is the recommended balance. Click an \
-        undownloaded model to download it — Susurro switches to it \
-        automatically and notifies you when it's ready. The checkmark shows \
-        the active model.
+        Choose the speech-recognition model. Each entry shows its download \
+        size and what it's good for, grouped by engine:
+
+        •  Whisper (whisper.cpp) — five sizes. Smaller models are faster but \
+        less accurate; small.en is the default and the recommended balance. \
+        large-v3-turbo is the only model that understands languages other \
+        than English.
+
+        •  NVIDIA Parakeet (Apple Silicon only) — parakeet-tdt-v2, English \
+        only. The most accurate option, and faster than small.en. Hidden on \
+        Intel Macs.
+
+        Click an undownloaded model to download it; the entry shows the \
+        percentage while it downloads. Susurro keeps using the current model \
+        until the new one is ready, then switches to it automatically and \
+        notifies you. Click a downloaded model to switch to it instantly. \
+        The checkmark shows the active model.
         """)
 
         heading("Push-to-Talk Key")
@@ -93,7 +105,9 @@ final class HelpWindowController {
 
         heading("About Susurro")
         body("""
-        Shows the installed version number and author.
+        Shows the installed version number, author, a link to the project \
+        on GitHub, and the licence credit for the NVIDIA Parakeet model \
+        (CC-BY-4.0).
         """)
 
         heading("Edit Rules…")
@@ -111,6 +125,16 @@ final class HelpWindowController {
         microphone pill in the menu bar. These are system privacy indicators \
         shown for every app that records audio; they disappear when you \
         release the key.
+        """)
+
+        heading("Menu bar icon")
+        body("""
+        The Susurro icon shows whether dictation is ready: a waveform when \
+        ready, an hourglass while a model loads, a down-arrow while one \
+        downloads, and an exclamation mark if loading failed. The first \
+        Parakeet load after install (and possibly after a macOS update) can take about 20 \
+        seconds while macOS compiles the model. If you press the key before \
+        it's ready, a notice tells you why nothing happened.
         """)
 
         heading("System permissions")

@@ -1,0 +1,17 @@
+# clip	reference (BEA-643). macOS `say` stand-ins, trailing silence trimmed to the last word (push-to-talk release).
+q-lunch.wav	Hey, are you coming to lunch today?
+q-think.wav	What do you think about the new design?
+q-meeting.wav	What time is the meeting tomorrow?
+q-send.wav	Can you send me the report by Friday?
+q-deploy.wav	Did the deploy finish without errors?
+q-where.wav	Where did you put the spare keys?
+q-should.wav	Should we push the release to next week?
+q-how.wav	How long will the migration take?
+s-numbers.wav	I think the numbers look good.
+s-call.wav	I'll call you back after the standup.
+s-groceries.wav	Please pick up milk and eggs on the way home.
+s-tests.wav	The tests are passing on the main branch now.
+s-thanks.wav	Thanks for sending that over so quickly.
+s-review.wav	Let me know what you think.
+s-done.wav	The build is done and ready for review.
+s-weather.wav	It looks like it is going to rain this afternoon.

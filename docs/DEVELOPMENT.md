@@ -90,7 +90,7 @@ SUSURRO_DEV_SEED_LEGACY_MODEL=1 ./build/Susurro.app/Contents/MacOS/Susurro
   output of the retired Python implementation (a local ptt checkout,
   `nemo_itn_daemon.py:apply_verbal_punctuation`) with two documented
   divergences (newline works, single backslash). Don't "fix" goldens casually.
-- **Corpus regression**: `.build/release/susurro-cli <model.bin> Fixtures/*.wav`
+- **Corpus regression**: `.build/release/susurro-cli <model.bin> Fixtures/*.wav` (or `--engine parakeet`; `scripts/ab_engines.py` for the engine A/B)
   — expected transcripts live in the golden tests / git history. When a
   real-world mishear matters, record a clip into `Fixtures/` and note the
   expected text.
