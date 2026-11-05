@@ -1,0 +1,68 @@
+# CI: build and unit-test Susurro on macOS (BEA-662 / review plan R5).
+# No signing, no release steps: releases stay local (`make release`).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    # The app uses macOS 26 SDK APIs (FoundationModels), so it needs the macOS 26 image.
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          cmake --version | head -1
+
+      # whisper.cpp static libs only change when the submodule pin or the
+      # `make whisper` recipe changes, so key the cache on exactly those.
+      - name: whisper.cpp cache key
+        id: whisper-key
+        run: |
+          sub=$(git rev-parse HEAD:vendor/whisper.cpp)
+          recipe=$(sed -n '/^whisper:/,/^$/p' Makefile | shasum -a 256 | cut -c1-16)
+          xcode=$(xcodebuild -version | head -1 | tr -d ' ')
+          echo "key=whisper-${{ runner.os }}-${{ runner.arch }}-${xcode}-${sub}-${recipe}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache whisper.cpp build
+        id: whisper-cache
+        uses: actions/cache@v4
+        with:
+          path: build-whisper
+          key: ${{ steps.whisper-key.outputs.key }}
+
+      - name: Build whisper.cpp (cache miss only)
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
+        run: make whisper
+
+      - name: Cache SwiftPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/repositories
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: swift build
+        run: swift build
+
+      - name: swift test
+        run: swift test
