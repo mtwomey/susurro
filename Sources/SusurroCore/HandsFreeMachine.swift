@@ -8,8 +8,10 @@ import Foundation
 ///   Releasing the push-to-talk key then keeps recording.
 /// - While latched: tap the push-to-talk key to stop and insert, or press
 ///   Esc to discard. Esc is only captured while latched.
-/// - A safety stop ends a latched session after `safetyLimit` seconds, with a
-///   warning `warningLead` seconds before.
+/// - Auto-stop (board, BEA-651): a latched session stops and inserts after
+///   `idleLimit` seconds with no speech, or `safetyLimit` seconds in total
+///   (two hours), each with a warning `warningLead` seconds before.
+/// - Switching to another app while latched stops the session.
 ///
 /// Pure value type: no clocks, no AppKit. The caller feeds key events and
 /// periodic ticks with timestamps (seconds, any monotonic base) and acts on
@@ -21,9 +23,9 @@ public struct HandsFreeMachine: Sendable, Equatable {
         /// Push-to-talk held, not latched (today's behaviour).
         case holding(since: Double)
         /// Latched while the push-to-talk key is still physically down.
-        case latchedHeld(since: Double)
+        case latchedHeld(since: Double, lastSpeech: Double)
         /// Latched, hands-free: push-to-talk released, still recording.
-        case latched(since: Double)
+        case latched(since: Double, lastSpeech: Double)
         /// A session just ended while the push-to-talk key was down; wait for
         /// its release so that release does nothing.
         case awaitingRelease
@@ -34,6 +36,10 @@ public struct HandsFreeMachine: Sendable, Equatable {
         case pttUp(at: Double)
         case latchDown(at: Double)
         case escape(at: Double)
+        /// Speech was heard (from the pause segmenter); resets the idle timer.
+        case heardSpeech(at: Double)
+        /// Another app became frontmost.
+        case appSwitched(at: Double)
         /// Periodic clock tick while recording (drives the safety stop).
         case tick(at: Double)
     }
@@ -47,8 +53,8 @@ public struct HandsFreeMachine: Sendable, Equatable {
         case stopAndInsert(reason: StopReason)
         /// Stop recording and throw it away.
         case cancel
-        /// The safety stop is near; `remaining` seconds left.
-        case warnSafetyStop(remaining: Double)
+        /// An auto-stop is near; `remaining` seconds left.
+        case warnAutoStop(reason: StopReason, remaining: Double)
     }
 
     public enum StopReason: Sendable, Equatable {
@@ -56,8 +62,12 @@ public struct HandsFreeMachine: Sendable, Equatable {
         case released
         /// Push-to-talk tapped while latched.
         case tapped
-        /// Safety limit reached.
+        /// Total-length safety limit reached.
         case safetyLimit
+        /// No speech for `idleLimit` seconds.
+        case idle
+        /// Another app became frontmost.
+        case appSwitched
     }
 
     public struct Output: Sendable, Equatable {
@@ -72,12 +82,15 @@ public struct HandsFreeMachine: Sendable, Equatable {
 
     public private(set) var state: State = .idle
     public let safetyLimit: Double
+    public let idleLimit: Double
     public let warningLead: Double
-    private var warned = false
+    private var warnedSafety = false
+    private var warnedIdle = false
 
-    public init(safetyLimit: Double = 600, warningLead: Double = 30) {
+    public init(safetyLimit: Double = 7_200, idleLimit: Double = 60, warningLead: Double = 10) {
         self.safetyLimit = safetyLimit
-        self.warningLead = min(warningLead, safetyLimit)
+        self.idleLimit = idleLimit
+        self.warningLead = min(warningLead, safetyLimit, idleLimit)
     }
 
     public var isRecording: Bool {
@@ -100,19 +113,38 @@ public struct HandsFreeMachine: Sendable, Equatable {
         // Today's push-to-talk path.
         case (.idle, .pttDown(let t)):
             state = .holding(since: t)
-            warned = false
+            warnedSafety = false
+            warnedIdle = false
             return Output([.startRecording])
         case (.holding, .pttUp):
             state = .idle
             return Output([.stopAndInsert(reason: .released)])
 
         // Latch while holding.
-        case (.holding(let since), .latchDown):
-            state = .latchedHeld(since: since)
+        case (.holding(let since), .latchDown(let t)):
+            state = .latchedHeld(since: since, lastSpeech: t)
             return Output([.latched])
-        case (.latchedHeld(let since), .pttUp):
-            state = .latched(since: since)
+        case (.latchedHeld(let since, let last), .pttUp):
+            state = .latched(since: since, lastSpeech: last)
             return Output()
+
+        // Speech keeps an idle session alive.
+        case (.latched(let since, _), .heardSpeech(let t)):
+            state = .latched(since: since, lastSpeech: t)
+            warnedIdle = false
+            return Output()
+        case (.latchedHeld(let since, _), .heardSpeech(let t)):
+            state = .latchedHeld(since: since, lastSpeech: t)
+            warnedIdle = false
+            return Output()
+
+        // Switching apps ends a hands-free session.
+        case (.latched, .appSwitched):
+            state = .idle
+            return Output([.stopAndInsert(reason: .appSwitched)])
+        case (.latchedHeld, .appSwitched):
+            state = .awaitingRelease
+            return Output([.stopAndInsert(reason: .appSwitched)])
 
         // Stop: tap push-to-talk. Act on the press; ignore its release.
         case (.latched, .pttDown):
@@ -130,20 +162,26 @@ public struct HandsFreeMachine: Sendable, Equatable {
             state = .awaitingRelease
             return Output([.cancel], swallow: true)
 
-        // Safety stop (hands-free only; hold mode ends when the key is released).
-        case (.latched(let since), .tick(let t)), (.latchedHeld(let since), .tick(let t)):
-            let elapsed = t - since
-            if elapsed >= safetyLimit {
-                let held: Bool
-                if case .latchedHeld = state { held = true } else { held = false }
+        // Auto-stop (hands-free only; hold mode ends when the key is released).
+        case (.latched(let since, let last), .tick(let t)),
+             (.latchedHeld(let since, let last), .tick(let t)):
+            let held: Bool
+            if case .latchedHeld = state { held = true } else { held = false }
+            let total = t - since, quiet = t - last
+            if total >= safetyLimit || quiet >= idleLimit {
                 state = held ? .awaitingRelease : .idle
-                return Output([.stopAndInsert(reason: .safetyLimit)])
+                return Output([.stopAndInsert(reason: total >= safetyLimit ? .safetyLimit : .idle)])
             }
-            if !warned && elapsed >= safetyLimit - warningLead {
-                warned = true
-                return Output([.warnSafetyStop(remaining: safetyLimit - elapsed)])
+            var effects: [Effect] = []
+            if !warnedSafety && total >= safetyLimit - warningLead {
+                warnedSafety = true
+                effects.append(.warnAutoStop(reason: .safetyLimit, remaining: safetyLimit - total))
             }
-            return Output()
+            if !warnedIdle && quiet >= idleLimit - warningLead {
+                warnedIdle = true
+                effects.append(.warnAutoStop(reason: .idle, remaining: idleLimit - quiet))
+            }
+            return Output(effects)
 
         default:
             // Everything else (latch key or Esc when not hands-free, repeats,
@@ -155,7 +193,8 @@ public struct HandsFreeMachine: Sendable, Equatable {
     /// Abort from outside (e.g. the recorder failed or the app is quitting).
     public mutating func reset() {
         state = .idle
-        warned = false
+        warnedSafety = false
+        warnedIdle = false
     }
 }
 

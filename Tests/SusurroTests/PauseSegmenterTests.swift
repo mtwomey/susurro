@@ -27,6 +27,14 @@ import Testing
         #expect(last == PauseSegmenter.Cut(sample: audio.count, hasSpeech: true))
     }
 
+    @Test func tracksLastSpeech() {
+        var s = PauseSegmenter()
+        #expect(s.lastSpeechSample == nil)
+        _ = s.append(Self.silence(0.5) + Self.tone(1.0) + Self.silence(2.0))
+        let last = s.lastSpeechSample ?? 0
+        #expect(last > Int(1.3 * 16_000) && last <= Int(1.5 * 16_000) + 320)
+    }
+
     @Test func shortPauseDoesNotCut() {
         var s = PauseSegmenter()
         let cuts = s.append(Self.tone(1.0) + Self.silence(0.3) + Self.tone(1.0))

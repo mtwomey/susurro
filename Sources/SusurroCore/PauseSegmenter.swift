@@ -47,6 +47,9 @@ public struct PauseSegmenter: Sendable {
         self.frameLen = max(1, config.sampleRate * config.frameMs / 1000)
     }
 
+    /// Absolute sample index at the end of the most recent speech frame.
+    public private(set) var lastSpeechSample: Int?
+
     /// Absolute index of the start of the current (unfinished) segment.
     public var currentSegmentStart: Int { segmentStart }
 
@@ -93,6 +96,7 @@ public struct PauseSegmenter: Sendable {
         let floor = sorted[min(sorted.count - 1, Int(Float(sorted.count) * config.floorPercentile))]
         let speech = rms > max(config.minThreshold, floor * config.floorRatio)
         frames.append((rms, speech))
+        if speech { lastSpeechSample = consumed }
 
         let fps = 1000.0 / Double(config.frameMs)
         let minPauseFrames = Int((config.minPause * fps).rounded())
