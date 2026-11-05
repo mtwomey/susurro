@@ -67,9 +67,9 @@ public struct ProvidedContext: Sendable, Equatable {
 
 public protocol ContextProvider: Sendable {
     var name: String { get }
-    /// `memoryTail` is what Susurro last typed into this same app (nil if
-    /// nothing, or another app since).
-    func context(_ snapshot: FieldSnapshot, memoryTail: String?) -> ProvidedContext?
+    /// `memory` is what Susurro last typed into this same app, and where
+    /// (nil if nothing, or another app since).
+    func context(_ snapshot: FieldSnapshot, memory: RememberedInsertion?) -> ProvidedContext?
 }
 
 /// Value + selection: the standard Cocoa contract. A caret past the end of
@@ -78,7 +78,7 @@ public protocol ContextProvider: Sendable {
 public struct SelectionRangeProvider: ContextProvider {
     public let name = "selectionRange"
     public init() {}
-    public func context(_ s: FieldSnapshot, memoryTail: String?) -> ProvidedContext? {
+    public func context(_ s: FieldSnapshot, memory: RememberedInsertion?) -> ProvidedContext? {
         guard let value = s.value, let sel = s.selection, sel.location != NSNotFound else { return nil }
         let ns = value as NSString
         let start = max(0, min(sel.location, ns.length))
@@ -95,7 +95,7 @@ public struct SelectionRangeProvider: ContextProvider {
 public struct EmptyValueProvider: ContextProvider {
     public let name = "emptyValue"
     public init() {}
-    public func context(_ s: FieldSnapshot, memoryTail: String?) -> ProvidedContext? {
+    public func context(_ s: FieldSnapshot, memory: RememberedInsertion?) -> ProvidedContext? {
         guard let value = s.value, value.isEmpty else { return nil }
         return ProvidedContext(before: "", after: "", source: .accessibility, provider: name)
     }
@@ -107,7 +107,7 @@ public struct EmptyValueProvider: ContextProvider {
 public struct TextMarkerProvider: ContextProvider {
     public let name = "textMarkers"
     public init() {}
-    public func context(_ s: FieldSnapshot, memoryTail: String?) -> ProvidedContext? {
+    public func context(_ s: FieldSnapshot, memory: RememberedInsertion?) -> ProvidedContext? {
         guard let before = s.markerBefore else { return nil }
         if let value = s.value {
             guard value.hasPrefix(before) else { return nil }
@@ -137,13 +137,14 @@ public struct AnchoredValueProvider: ContextProvider {
     public var searchLimit = 200_000
     public init() {}
 
-    public func context(_ s: FieldSnapshot, memoryTail: String?) -> ProvidedContext? {
-        guard let value = s.value, !value.isEmpty, let memoryTail, !memoryTail.isEmpty else { return nil }
-        if let before = endAnchored(value: value, tail: memoryTail) {
+    public func context(_ s: FieldSnapshot, memory: RememberedInsertion?) -> ProvidedContext? {
+        guard let value = s.value, !value.isEmpty, let memory, !memory.tail.isEmpty else { return nil }
+        if let before = endAnchored(value: value, tail: memory.tail) {
             return ProvidedContext(before: before, after: nil, source: .anchoredValue, provider: name + ".end")
         }
-        if let (before, after) = uniqueInterior(value: value, tail: memoryTail) {
-            return ProvidedContext(before: before, after: after, source: .anchoredValue, provider: name + ".interior")
+        if let found = interior(value: value, memory: memory) {
+            return ProvidedContext(before: found.before, after: found.after, source: .anchoredValue,
+                                   provider: name + found.how)
         }
         return nil
     }
@@ -167,14 +168,51 @@ public struct AnchoredValueProvider: ContextProvider {
         return nil
     }
 
-    func uniqueInterior(value: String, tail: String) -> (String, String)? {
-        let haystack = value.count > searchLimit ? String(value.suffix(searchLimit)) : value
-        for prefix in prefixes(tail) {
-            guard let first = haystack.range(of: prefix) else { continue }
-            if haystack.range(of: prefix, range: haystack.index(after: first.lowerBound)..<haystack.endIndex) != nil {
-                return nil   // ambiguous: don't guess
+    /// Cursor mid-buffer. The anchor is the longest prefix of the remembered
+    /// text found in the value. Several matches (the same phrase dictated
+    /// twice) are resolved by the remembered insertion position: the match
+    /// nearest to it wins, if it is clearly nearest; otherwise no answer.
+    /// When the value grew by a few characters beyond what the anchor
+    /// accounts for, and they sit right after the anchor and are all whitespace,
+    /// the user typed them there (a space before the next dictation), so
+    /// they belong to the text before the cursor.
+    func interior(value: String, memory: RememberedInsertion) -> (before: String, after: String, how: String)? {
+        let ns = value as NSString
+        let limit = ns.length > searchLimit ? ns.length - searchLimit : 0
+        for prefix in prefixes(memory.tail) {
+            var ends: [Int] = []
+            var search = NSRange(location: limit, length: ns.length - limit)
+            while true {
+                let r = ns.range(of: prefix, options: [], range: search)
+                if r.location == NSNotFound { break }
+                ends.append(r.location + r.length)
+                let next = r.location + 1
+                if next >= ns.length { break }
+                search = NSRange(location: next, length: ns.length - next)
             }
-            return (String(haystack[..<first.upperBound]), String(haystack[first.upperBound...]))
+            guard !ends.isEmpty else { continue }
+            var end: Int
+            var how = ".interior"
+            if ends.count == 1 {
+                end = ends[0]
+            } else {
+                guard let target = memory.position?.caretOffset else { return nil }
+                let sorted = ends.sorted { abs($0 - target) < abs($1 - target) }
+                guard abs(sorted[0] - target) < abs(sorted[1] - target) else { return nil }
+                end = sorted[0]
+                how = ".interior.nearest"
+            }
+            if let remembered = memory.position?.valueLength {
+                // Characters the user deleted from the end of Susurro's text
+                // (a full stop) are already missing from the anchor.
+                let deleted = (memory.tail as NSString).length - (prefix as NSString).length
+                let grown = ns.length - (remembered - deleted)
+                if grown > 0, grown <= maxUserEdit, end + grown <= ns.length {
+                    let typed = ns.substring(with: NSRange(location: end, length: grown))
+                    if typed.allSatisfy(\.isWhitespace) { end += grown }
+                }
+            }
+            return (ns.substring(to: end), ns.substring(from: end), how)
         }
         return nil
     }
@@ -184,9 +222,9 @@ public struct AnchoredValueProvider: ContextProvider {
 public struct MemoryProvider: ContextProvider {
     public let name = "memory"
     public init() {}
-    public func context(_ s: FieldSnapshot, memoryTail: String?) -> ProvidedContext? {
-        guard let memoryTail else { return nil }
-        return ProvidedContext(before: memoryTail, after: nil, source: .selfTracked, provider: name)
+    public func context(_ s: FieldSnapshot, memory: RememberedInsertion?) -> ProvidedContext? {
+        guard let memory else { return nil }
+        return ProvidedContext(before: memory.tail, after: nil, source: .selfTracked, provider: name)
     }
 }
 
@@ -202,6 +240,13 @@ public extension InsertContext {
     static func resolve(snapshot: FieldSnapshot?, memoryTail: String?,
                         pid: pid_t?, bundleID: String?, engine: EngineKind?, secureInput: Bool,
                         providers: [any ContextProvider] = standardProviders) -> (InsertContext, String) {
+        resolve(snapshot: snapshot, memory: memoryTail.map { RememberedInsertion(tail: $0) },
+                pid: pid, bundleID: bundleID, engine: engine, secureInput: secureInput, providers: providers)
+    }
+
+    static func resolve(snapshot: FieldSnapshot?, memory: RememberedInsertion?,
+                        pid: pid_t?, bundleID: String?, engine: EngineKind?, secureInput: Bool,
+                        providers: [any ContextProvider] = standardProviders) -> (InsertContext, String) {
         let secure = secureInput || (snapshot?.secure ?? false)
         if secure {
             return (InsertContext(before: nil, source: .none, pid: pid, bundleID: bundleID,
@@ -209,7 +254,7 @@ public extension InsertContext {
         }
         let snap = snapshot ?? .nothing
         for provider in providers {
-            if let found = provider.context(snap, memoryTail: memoryTail) {
+            if let found = provider.context(snap, memory: memory) {
                 return (InsertContext(before: found.before, after: found.after, source: found.source,
                                       pid: pid, bundleID: bundleID, engine: engine, secureInput: false),
                         found.provider)

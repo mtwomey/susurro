@@ -732,7 +732,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     let sameApp = frontmostPID != nil && frontmostPID == releasePID
                     let resolved = InsertContext.resolve(
                         snapshot: sameApp ? fieldRead : nil,
-                        memoryTail: frontmostPID.flatMap { self.dictationMemory.tailIfStillFocused(pid: $0) },
+                        memory: frontmostPID.flatMap { self.dictationMemory.insertionIfStillFocused(pid: $0) },
                         pid: frontmostPID, bundleID: releaseBundleID, engine: engine.kind,
                         secureInput: secureInputActive)
                     context = resolved.0
@@ -749,7 +749,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard !text.isEmpty else { return }
                 let typed = TextInjector.type(text)
                 if !secureInputActive, typed, let frontmostPID {
-                    self.dictationMemory.recordTyped(text, intoPID: frontmostPID)
+                    // Where the insertion ended inside a cursorless value, so the
+                    // next anchored lookup can tell repeated phrases apart.
+                    var position: ValuePosition?
+                    if context.source == .anchoredValue, let before = context.before,
+                       let value = fieldRead?.value {
+                        let typedLength = (text as NSString).length
+                        position = ValuePosition(caretOffset: (before as NSString).length + typedLength,
+                                                 valueLength: (value as NSString).length + typedLength)
+                    }
+                    self.dictationMemory.recordTyped(text, intoPID: frontmostPID, position: position)
                 } else {
                     // Nothing was actually typed (secure input blocked it, a
                     // keystroke event failed to post, or we couldn't identify

@@ -206,9 +206,15 @@ The Accessibility reader (`FocusedFieldReader`) only collects raw facts into a `
 
 No provider looks at a bundle ID, so each covers every app with that shape. A new case means a new
 provider in the list. Coverage log lines name the provider (`provider=anchoredValue.interior` etc.).
+The anchored lookup also remembers where its last insertion ended in the value (`ValuePosition`:
+caret offset and value length, numbers only). With that, a phrase that occurs more than once is
+resolved to the occurrence nearest the remembered position (`anchoredValue.interior.nearest`), and
+whitespace the user typed right after Susurro's text is seen: if the value grew by a few characters
+beyond what the anchor accounts for and they sit right after it and are all whitespace, they count
+as text before the cursor.
 Limits: a value with no cursor and no Susurro text in it (the first dictation, or after clearing)
-gives no answer, so the empty-field policy applies; with the cursor mid-buffer a space the user typed
-after the anchor is not seen.
+gives no answer, so the empty-field policy applies; edits elsewhere in the buffer between dictations can
+shift the remembered position (the nearest-match rule then still needs a clear winner).
 
 ### 6.1 Per-app coverage
 Board decision (2026-11-04): the table covers the apps Matthew actually uses (Zen, Warp, and any he adds;
@@ -227,4 +233,4 @@ to 8 characters of the user's own edits and no newline; otherwise the memory fal
 | Terminal | | | |
 | Zen (Gecko) | accessibility, `range` path, role AXTextField (log: valueLen/caret consistent) | all OK on retest (72de228) | First run had a double space at step 3; the retest passed. The log never showed a caret past the value end, so the caret-past-end rule is unproven as the cause; it stays as a harmless guard |
 | Warp | `anchoredValue.end` (formerly `bufferTail`) (AXTextArea, whole buffer, no caret); empty prompt → `none` | all OK on retest (5b9e5f6): log 03:52 shows none → bufferTail → bufferTail | First run (memory only): capital "And" after a deleted full stop, double space after a typed space; fixed by the buffer-end rule |
-| Emacs 30.1 (NS) | focused element is the AXWindow, value = buffer text, no range → `AnchoredValueProvider` | all OK (board, 3176cc2); log 03:58 shows none → `anchoredValue.end` → `anchoredValue.end` | The mid-buffer (`.interior`) path did not fire on device, because the cursor was at the buffer end; it is covered by unit tests only |
+| Emacs 30.1 (NS) | AXWindow, value = buffer, no range → `AnchoredValueProvider` | end of buffer OK; mid-buffer OK (log 04:00:55 `anchoredValue.interior`); a space typed before dictating gave a capital (04:01:00 fell to `memory`: the repeated test phrase made the anchor ambiguous) | Fixed by remembered insertion position + typed-whitespace detection; retest pending |

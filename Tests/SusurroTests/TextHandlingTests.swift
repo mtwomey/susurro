@@ -222,7 +222,7 @@ import Testing
     @Test func customProviderOrderIsHonoured() {
         struct Fixed: ContextProvider {
             let name = "fixed"
-            func context(_ s: FieldSnapshot, memoryTail: String?) -> ProvidedContext? {
+            func context(_ s: FieldSnapshot, memory: RememberedInsertion?) -> ProvidedContext? {
                 ProvidedContext(before: "x", after: nil, source: .accessibility, provider: name)
             }
         }
@@ -231,5 +231,55 @@ import Testing
                                            providers: [Fixed(), SelectionRangeProvider()])
         #expect(p == "fixed")
         #expect(c.before == "x")
+    }
+
+    // Repeated phrases and a space typed after the anchor (Emacs, board run)
+
+    @Test func repeatedPhraseResolvedByRememberedPosition() {
+        let first = "Hello there and then we left.\n"
+        let text = first + "\nnotes\nHello there and then we left.\nmore below\n"
+        let secondEnd = (first + "\nnotes\nHello there and then we left.") as NSString
+        let memory = RememberedInsertion(tail: "nd then we left.",
+                                         position: ValuePosition(caretOffset: secondEnd.length,
+                                                                 valueLength: (text as NSString).length))
+        let (c, p) = InsertContext.resolve(snapshot: buffer(text), memory: memory, pid: 1, bundleID: nil,
+                                           engine: nil, secureInput: false)
+        #expect(p == "anchoredValue.interior.nearest")
+        #expect(c.after == "\nmore below\n")
+    }
+
+    @Test func repeatedPhraseWithoutPositionDoesNotGuess() {
+        let text = "we left.\nx\nwe left.\ny"
+        #expect(resolve(buffer(text), memory: "we left.").1 == "memory")
+    }
+
+    @Test func spaceTypedAfterAnchorMidBufferIsSeen() {
+        let before = "Intro.\nHello there and then we left."
+        let after = "\nTail text.\n"
+        let typedLength = (before + after as NSString).length
+        let memory = RememberedInsertion(tail: "nd then we left.",
+                                         position: ValuePosition(caretOffset: (before as NSString).length,
+                                                                 valueLength: typedLength))
+        // The user then typed one space after "left." before dictating.
+        let now = before + " " + after
+        let (c, p) = InsertContext.resolve(snapshot: buffer(now), memory: memory, pid: 1, bundleID: nil,
+                                           engine: nil, secureInput: false)
+        #expect(p == "anchoredValue.interior")
+        #expect(c.before?.hasSuffix("left. ") == true)
+        #expect(stage.apply("it was late.", c) == "It was late.")
+        #expect(stage.apply("And it was late.", InsertContext(before: "we left ", source: .anchoredValue)) == "and it was late.")
+    }
+
+    @Test func deletedFullStopThenTypedSpaceMidBuffer() {
+        let before = "Intro.\nHello there and then we left."
+        let after = "\nTail text.\n"
+        let memory = RememberedInsertion(tail: "nd then we left.",
+                                         position: ValuePosition(caretOffset: (before as NSString).length,
+                                                                 valueLength: (before + after as NSString).length))
+        let now = "Intro.\nHello there and then we left " + after
+        let (c, _) = InsertContext.resolve(snapshot: buffer(now), memory: memory, pid: 1, bundleID: nil,
+                                           engine: nil, secureInput: false)
+        #expect(c.before?.hasSuffix("we left ") == true)
+        #expect(stage.apply("It was late.", c) == "it was late.")
     }
 }
