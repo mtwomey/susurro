@@ -86,10 +86,12 @@ Access, or edit `SIGN_ID` in the Makefile.
   switches to it when it finishes; picking a downloaded one switches to it
   right away.
 - **Smart Spacing** (off by default): menu → **Smart Spacing**. When on,
-  dictating again right after Susurro typed something adds a leading space
-  (unless one's already there), so back-to-back dictations don't run
-  together. Tracked by Susurro itself (not a field read), so it resets if
-  you switch apps in between.
+  Susurro looks at the text just before the cursor (through macOS
+  Accessibility) so new words fit in: one space between sentences, never a
+  stray leading or double space, and lower-case when you're continuing a
+  sentence. Password fields are never read, and field text is never stored
+  or logged. Where a field can't be read, it falls back to remembering what
+  it last typed. Emacs is read through its server, if it's running.
 
 ## Model options
 
