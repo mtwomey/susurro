@@ -12,7 +12,7 @@ public struct PauseSegmenter: Sendable {
         public var sampleRate: Int = 16_000
         public var frameMs: Int = 20
         /// Silence this long, after enough speech, ends a segment.
-        public var minPause: Double = 0.7
+        public var minPause: Double = 1.0
         /// Speech needed in a segment before a pause may end it. Low enough
         /// for a single short word ("Yes." is ~0.4 s of speech frames; the
         /// board's device test found 0.6 s left one-word chunks waiting until

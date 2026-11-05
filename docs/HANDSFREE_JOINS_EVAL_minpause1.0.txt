@@ -1,0 +1,50 @@
+OK  voice-break  gap=0.8 nocut          words=same | The meeting is at 3:30 p.m. on January 22nd. Can you call me at 9:45 a.m. tomorrow?
+OK  voice-break  gap=1.2 unmatched      words=same | Can you call me at 9:45 a.m. tomorrow? The invoice for one thousand two hundred and fifty is due on March 3rd.
+OK  voice-break  gap=1.8 sentenceBreak  words=same | The invoice for one thousand two hundred and fifty is due on March 3rd. Our flight leaves at 6:15 a.m. on Friday, October 10.
+OK  voice-break  gap=2.5 sentenceBreak  words=same | Our flight leaves at 6:15 a.m. on Friday, October 10th. Revenue grew 18% to four point two million last quarter.
+OK  voice-break  gap=0.8 sentenceBreak  words=same | Revenue grew 18% to 4.2 million last quarter. What time does the train leave on Saturday?
+OK  voice-break  gap=1.2 sentenceBreak  words=same | What time does the train leave on Saturday? Set a reminder for 11 a.m. on December 1st.
+OK  voice-break  gap=1.8 sentenceBreak  words=same EXCL:dirty-clip | Set a reminder for 11 a.m. on December 1st. The server rebooted at two forty five this one's messed up. The server rebooted at 2:47 am and was down for 12 minutes.
+OK  voice-break  gap=2.5 sentenceBreak  words=same EXCL:dirty-clip | The server rebooted at two forty five this one's messed up. The server rebooted at 2:47 am and was down for 12 minutes. Did you send the report to the whole team?
+OK  voice-break  gap=0.8 sentenceBreak  words=same | Did you send the report to the whole team? Rent goes up by 3% starting on April 1st.
+OK  voice-break  gap=1.2 sentenceBreak  words=same | Rent goes up by 3% starting on April 1st. Deploy the Dagster pipeline and rerun the dbt models in Snowflake.
+OK  voice-break  gap=1.8 sentenceBreak  words=same | Deploy the Dagster pipeline and rerun the dbt models in Snowflake. I'll be in Chicago from the 5th to the 9th of June.
+OK  voice-break  gap=2.5 sentenceBreak  words=same | I'll be in Chicago from the 5th to the 9th of June. How long will the migration take?
+OK  voice-break  gap=0.8 sentenceBreak  words=same | How long will the migration take? Thanks for sending that over so quickly.
+OK  voice-break  gap=1.2 sentenceBreak  words=same | Thanks for sending that over so quickly. Let me know what you think.
+OK  voice-mid    gap=0.8 continuation   words=same | The meeting is at 3:30 p.m on January 22nd.
+OK  voice-mid    gap=1.2 continuation   words=same EXCL:split-in-word | Can you call me at 945 bay him tomorrow.
+OK  voice-mid    gap=1.8 continuation   words=same EXCL:split-in-word | The invoice for one thousand two hundred and fifty fifty is due on March 3rd.
+OK  voice-mid    gap=2.5 continuation   words=same | Our flight leaves at 6:15 a.m. on friday, October 10th.
+OK  voice-mid    gap=0.8 nocut          words=same | Revenue grew 18% to 4.2 million last quarter.
+OK  voice-mid    gap=1.2 continuation   words=same | What time does the train leave on Saturday.
+OK  voice-mid    gap=1.8 continuation   words=same EXCL:split-in-word | Set a reminder for 11 a.m come on December 1st.
+OK  voice-mid    gap=2.5 continuation   words=same EXCL:dirty-clip | The server rebooted at two forty five this one's messed up. The server rebooted at 2:47 am and was down for 12 minutes.
+OK  voice-mid    gap=0.8 nocut          words=same | Did you send the report to the whole team?
+OK  voice-mid    gap=1.2 continuation   words=same EXCL:split-in-word | The rent goes up by 3% starting on April 1st.
+OK  voice-mid    gap=1.8 continuation   words=same EXCL:split-in-word | Deploy the Dexter pipeline and rerun the DBT t models in Snowflake.
+BAD voice-mid    gap=2.5 unmatched      words=same EXCL:split-in-word | I'll be in Chicago from the f. Fifth to the ninth of June.
+OK  voice-mid    gap=0.8 nocut          words=same | How long will the migration take?
+OK  voice-mid    gap=1.2 continuation   words=same | Thanks for sending that over so quickly.
+OK  voice-mid    gap=1.8 continuation   words=same EXCL:split-in-word | Let me know what you what do you think?
+OK  say-mid      gap=0.8 nocut          words=same | So, I was thinking that we should probably move the deploy to Thursday because the tests are still flaky.
+OK  say-mid      gap=1.2 continuation   words=same | Can you send me the quarterly report before the meeting on Friday.
+OK  say-mid      gap=1.8 continuation   words=same | I think the main problem with the new design is that it takes too long to load.
+OK  say-mid      gap=2.5 continuation   words=same | We need to talk to the vendor about the contract renewal.
+OK  say-mid      gap=0.8 continuation   words=same | Please make sure that everyone has access to the shared folder.
+OK  say-mid      gap=1.2 continuation   words=same | The reason I'm asking is because the numbers do not add up.
+OK  say-break    gap=1.8 sentenceBreak  words=same | Yes, that works for me. Send it to the team tomorrow morning.
+OK  say-break    gap=2.5 sentenceBreak  words=same | The build is finally green. Let us ship it this afternoon.
+OK  say-break    gap=0.8 sentenceBreak  words=same | Are you coming to lunch today? We are meeting at the usual place.
+OK  say-break    gap=1.2 sentenceBreak  words=same | Thanks for the quick reply. I will review the draft tonight.
+OK  say-break    gap=1.8 sentenceBreak  words=same | The tests passed on my machine. Can you try them on yours?
+OK  say-break    gap=2.5 sentenceBreak  words=same | I fixed the login bug. The next release should go out on Monday.
+
+say-break                                     6/6 = 100%  (no cut: 0)
+say-mid                                       6/6 = 100%  (no cut: 1)
+voice-break                                   12/12 = 100%  (no cut: 1)
+voice-break [excluded: dirty-clip]            2/2 = 100%  (no cut: 0)
+voice-mid                                     7/7 = 100%  (no cut: 3)
+voice-mid [excluded: dirty-clip]              1/1 = 100%  (no cut: 0)
+voice-mid [excluded: split-in-word]           6/7 = 86%  (no cut: 0)
+words identical to per-chunk: True; joint transcribe total 1.88s over 28 joins

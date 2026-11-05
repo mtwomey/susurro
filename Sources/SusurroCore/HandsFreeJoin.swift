@@ -104,6 +104,16 @@ public enum HandsFreeJoin {
         }
     }
 
+    /// Fallback guard: is the cursor still right after the previous chunk's
+    /// words? Unknown context (nil) counts as in place: only the session's
+    /// own typing ran since. A moved cursor or changed field returns false and
+    /// the join is skipped (the held mark is never typed at a different spot).
+    public static func isInPlace(before: String?, previousBody: String) -> Bool {
+        guard let before else { return true }
+        guard let tail = previousBody.split(whereSeparator: { $0.isWhitespace }).last else { return true }
+        return before.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasSuffix(tail.lowercased())
+    }
+
     // MARK: - Joint clip
 
     /// Build the joint clip. Indices are relative to each chunk.

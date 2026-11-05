@@ -867,10 +867,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     // the only thing that ran since. Moved cursor: B goes in as a
                     // fresh dictation and A's held mark is dropped (never typed
                     // at the wrong spot).
-                    let tail = joinAfter.split(whereSeparator: { $0.isWhitespace }).last.map(String.init) ?? ""
-                    let before = context.before?.trimmingCharacters(in: .whitespaces)
-                    let inPlace = before == nil || tail.isEmpty || before!.lowercased().hasSuffix(tail.lowercased())
-                    if inPlace { text = joinText } else { slog("handsfree: cursor moved, join skipped") }
+                    if HandsFreeJoin.isInPlace(before: context.before, previousBody: joinAfter) { text = joinText } else { slog("handsfree: cursor moved, join skipped") }
                 }
                 let readDetail = fieldRead?.detail ?? (pendingFieldRead == nil ? "notRead" : "timeout")
                 TextHandlingLog.record("source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)")

@@ -66,6 +66,14 @@ struct HandsFreeJoinTests {
                                      jointText: "The meeting is at 3:30 p.m. on January 22nd.") == .continuation)
     }
 
+    @Test func cursorMovedFallback() {
+        #expect(HandsFreeJoin.isInPlace(before: nil, previousBody: "we should probably"))
+        #expect(HandsFreeJoin.isInPlace(before: "Hi. So we should probably", previousBody: "we should probably"))
+        #expect(HandsFreeJoin.isInPlace(before: "so we should Probably ", previousBody: "we should probably"))
+        #expect(!HandsFreeJoin.isInPlace(before: "Dear Sam,", previousBody: "we should probably"))
+        #expect(!HandsFreeJoin.isInPlace(before: "", previousBody: "we should probably"))
+    }
+
     // MARK: joined
 
     @Test func joinedText() {

@@ -18,6 +18,9 @@ usage: handsfree_join_eval.py <voice-dir> <out-dir> [--min-pause S] [--engine pa
 import array, json, os, re, subprocess, sys, wave
 
 GAPS = [0.8, 1.2, 1.8, 2.5]
+# v08 contains a spoken retake ("...at 2:45. This one's messed up. The server
+# rebooted at 2:47...") - a real third sentence, so it is reported, not scored.
+DIRTY = {"v08.wav"}
 SR = 16000
 
 def to16k(src, dst):
@@ -46,6 +49,24 @@ def quietest_split(s):
         run = run + 1 if e <= thr else 0
         if run > best[0]: best = (run, lo + (n - run // 2) * win)
     return best[1]
+
+def split_candidates(s, top=8):
+    # Centers of quiet runs (likely word gaps) in the middle 25-75%, longest first.
+    win = int(0.01 * SR); lo, hi = int(len(s) * 0.25), int(len(s) * 0.75)
+    es = [sum(x * x for x in s[i:i + win]) / win for i in range(lo, hi - win, win)]
+    thr = sorted(es)[len(es) // 10] * 4 + 1
+    runs, run = [], 0
+    for n, e in enumerate(es + [float("inf")]):
+        if e <= thr: run += 1
+        else:
+            if run >= 2: runs.append((run, lo + (n - run // 2) * win))
+            run = 0
+    return [p for _, p in sorted(runs, reverse=True)[:top]] or [quietest_split(s)]
+
+def run_cli(cli, extra, paths):
+    res = subprocess.run([cli, "--engine", "parakeet", "--handsfree", *extra] + paths,
+                         capture_output=True, text=True, check=True)
+    return {r["file"]: r for r in (json.loads(l[l.index("{"):]) for l in res.stdout.splitlines() if "{\"chunks" in l)}
 
 def say(text, dst, tmp):
     aiff = dst + ".aiff"
@@ -76,38 +97,69 @@ def main():
     for i in range(len(clips) - 1):
         g = GAPS[i % 4]; name = f"voice_break_{i+1:02d}.wav"
         write(os.path.join(out, name), v[clips[i]] + silence(g) + v[clips[i + 1]])
-        cases.append((name, "voice-break", "sentenceBreak", g))
+        cases.append((name, "voice-break", "sentenceBreak", g, {clips[i], clips[i + 1]}))
+    # Pick, per clip, the first candidate split whose two halves transcribe
+    # (hold-to-talk) to exactly the whole clip's words: a split at a real word
+    # gap, as a real thinking pause would be.
+    cli = os.environ.get("SUSURRO_CLI", ".build/debug/susurro-cli")
+    norm = lambda t: re.sub(r"[^a-z0-9 ]", "", t.lower()).split()
+    cand = {}
+    paths = [os.path.join(out, "src_" + f) for f in clips]
+    for f in clips:
+        cand[f] = split_candidates(v[f])
+        for j, k in enumerate(cand[f]):
+            for half, part in (("a", v[f][:k]), ("b", v[f][k:])):
+                p = os.path.join(out, f"cand_{f[:-4]}_{j}_{half}.wav"); write(p, part); paths.append(p)
+    pre = run_cli(cli, [], paths)
+    split_at = {}
+    for f in clips:
+        whole = norm(" ".join(pre["src_" + f]["chunks"]))
+        split_at[f] = cand[f][0]
+        for j, k in enumerate(cand[f]):
+            a = pre[f"cand_{f[:-4]}_{j}_a.wav"]["chunks"]; b = pre[f"cand_{f[:-4]}_{j}_b.wav"]["chunks"]
+            if a and b and norm(" ".join(a + b)) == whole: split_at[f] = k; break
     for i, f in enumerate(clips):
-        g = GAPS[i % 4]; s = v[f]; k = quietest_split(s); name = f"voice_mid_{i+1:02d}.wav"
+        g = GAPS[i % 4]; s = v[f]; k = split_at[f]; name = f"voice_mid_{i+1:02d}.wav"
         write(os.path.join(out, name), s[:k] + silence(g) + s[k:])
-        cases.append((name, "voice-mid", "continuation", g))
+        cases.append((name, "voice-mid", "continuation", g, {f}))
     for i, (a, b) in enumerate(SAY_MID + SAY_BREAK):
         mid = i < len(SAY_MID); g = GAPS[i % 4]
         say(a, os.path.join(out, "a.wav"), out); say(b, os.path.join(out, "b.wav"), out)
         name = f"say_{'mid' if mid else 'break'}_{i+1:02d}.wav"
         write(os.path.join(out, name), read(os.path.join(out, "a.wav")) + silence(g) + read(os.path.join(out, "b.wav")))
-        cases.append((name, "say-mid" if mid else "say-break", "continuation" if mid else "sentenceBreak", g))
+        cases.append((name, "say-mid" if mid else "say-break", "continuation" if mid else "sentenceBreak", g, set()))
     cli = os.environ.get("SUSURRO_CLI", ".build/debug/susurro-cli")
-    res = subprocess.run([cli, "--engine", "parakeet", "--handsfree", *extra] + [os.path.join(out, c[0]) for c in cases],
+    srcs = [os.path.join(out, "src_" + f) for f in clips]
+    res = subprocess.run([cli, "--engine", "parakeet", "--handsfree", *extra] + [os.path.join(out, c[0]) for c in cases] + srcs,
                          capture_output=True, text=True, check=True)
     rows = [json.loads(l[l.index("{"):]) for l in res.stdout.splitlines() if "{\"chunks" in l]
     by = {r["file"]: r for r in rows}
     norm = lambda t: re.sub(r"[^a-z0-9 ]", "", t.lower()).split()
+    # Hold-to-talk words of each source clip: a mid-sentence split is only a
+    # valid fixture if the two halves transcribe to the same words (a real
+    # pause never falls inside a word; our synthetic split sometimes does).
+    ptt = {f: norm(" ".join(by["src_" + f]["chunks"])) for f in clips}
     stats, words_ok, detail = {}, True, []
-    for name, kind, exp, g in cases:
-        r = by[name]; d = r["decisions"]
+    for name, kind, exp, g, used in cases:
+        r = by[name]; d = r["decisions"]; n = len(r["chunks"])
         # No mark held (A ended unmarked) = continuation via ContinuationCase.
-        got = d[0] if len(d) == 1 else ("continuation" if len(r["chunks"]) == 2 and not d else f"cuts={len(r['chunks'])}")
-        if got == "unmatched": got_eff = "sentenceBreak"
-        else: got_eff = got
+        if len(d) == 1: got = d[0]
+        elif n == 2 and not d: got = "continuation"
+        elif n == 1: got = "nocut"   # segmenter didn't cut: one transcript, as hold-to-talk
+        else: got = f"cuts={n}"
+        got_eff = {"unmatched": "sentenceBreak", "nocut": exp}.get(got, got)
         ok = got_eff == exp
-        st = stats.setdefault(kind, [0, 0]); st[0] += ok; st[1] += 1
+        excl = None
+        if DIRTY & used: excl = "dirty-clip"
+        elif kind == "voice-mid" and n == 2 and norm(" ".join(r["chunks"])) != ptt[next(iter(used))]: excl = "split-in-word"
+        key = kind if not excl else f"{kind} [excluded: {excl}]"
+        st = stats.setdefault(key, [0, 0, 0]); st[0] += ok; st[1] += 1; st[2] += got == "nocut"
         w_ok = norm(r["typed"]) == norm(" ".join(r["chunks"]))
         words_ok &= w_ok
-        detail.append(f"{'OK ' if ok else 'BAD'} {kind:12s} gap={g:.1f} {got:14s} words={'same' if w_ok else 'DIFF'} | {r['typed']}")
+        detail.append(f"{'OK ' if ok else 'BAD'} {kind:12s} gap={g:.1f} {got:14s} words={'same' if w_ok else 'DIFF'}{' EXCL:' + excl if excl else ''} | {r['typed']}")
     print("\n".join(detail))
     print()
-    for k, (a, n) in stats.items(): print(f"{k:12s} {a}/{n} = {100*a/n:.0f}%")
+    for k, (a, n, nc) in sorted(stats.items()): print(f"{k:45s} {a}/{n} = {100*a/n:.0f}%  (no cut: {nc})")
     js = [r["jointSeconds"] for r in rows if r["decisions"]]
     print(f"words identical to per-chunk: {words_ok}; joint transcribe total {sum(js):.2f}s over {len(js)} joins")
 
