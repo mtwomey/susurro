@@ -46,6 +46,23 @@ enum TextInjector {
         return true
     }
 
+    /// Delete `count` characters before the cursor (Backspace). Only used to
+    /// retract a hands-free end mark Susurro itself just typed, after the
+    /// caller verified it sits right before the cursor (BEA-657).
+    @discardableResult
+    static func deleteBackward(_ count: Int) -> Bool {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        for _ in 0..<count {
+            guard let down = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: false)
+            else { return false }
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+            usleep(2_000)
+        }
+        return true
+    }
+
     @discardableResult
     private static func pressReturn(source: CGEventSource?) -> Bool {
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: returnKeyCode, keyDown: true),

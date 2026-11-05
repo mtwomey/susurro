@@ -37,6 +37,16 @@ public struct DictationMemory {
         last = (pid, String(combined.suffix(Self.contextLength)), position)
     }
 
+    /// Call after deleting `count` characters Susurro itself typed (a shown
+    /// hands-free end mark retracted with Backspace, BEA-657).
+    public mutating func recordDeletedBackward(_ count: Int, inPID pid: pid_t) {
+        guard let current = last, current.pid == pid, count > 0 else { return }
+        let position = current.position.map {
+            ValuePosition(caretOffset: max(0, $0.caretOffset - count), valueLength: max(0, $0.valueLength - count))
+        }
+        last = (pid, String(current.tail.dropLast(count)), position)
+    }
+
     /// What Susurro last typed into this app, plus where, if known.
     public func insertionIfStillFocused(pid: pid_t) -> RememberedInsertion? {
         guard let last, last.pid == pid else { return nil }

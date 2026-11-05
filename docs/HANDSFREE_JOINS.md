@@ -35,6 +35,21 @@ mid-sentence typed "we should probably. Move the deploy...".
 Hold-to-talk is unchanged. Typed words are always the per-piece words; only
 the boundary punctuation and first-letter case can change.
 
+## Shown-mark mode (board follow-up)
+Holding the mark back looked odd when a sentence had clearly ended. Now, when
+the focused field is readable (Accessibility, anchored value or app bridge),
+each piece is typed WITH its end mark at the pause. At the next piece the same
+joint transcript decides the join:
+- sentence break / no match: type " " + the piece (capital kept);
+- continuation: one Backspace removes the mark, then " " + the piece with its
+  first word lower-cased.
+The Backspace is guarded (`HandsFreeJoin.canRetract`): the field's text before
+the cursor must end with the previous piece's last word immediately followed by
+that same mark. Otherwise nothing is deleted, the mark stays, and the piece is
+typed as a fresh dictation (the pre-BEA-657 result). Fields that can't be read
+keep the hold-back behaviour above, so there is never a blind delete. A shown
+mark is already in place at stop, Esc or an app switch.
+
 ## Evaluation
 `swift build && python3 scripts/handsfree_join_eval.py <Fixtures/voice dir> <out dir> [--min-pause S]`
 uses `susurro-cli --handsfree` (same segmenter + joiner as the app, Parakeet).

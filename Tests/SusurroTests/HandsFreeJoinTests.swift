@@ -82,6 +82,51 @@ struct HandsFreeJoinTests {
         #expect(HandsFreeJoin.trimmedStart(chunkStart: 1000, firstSpeech: nil) == 1000)
     }
 
+    // MARK: shown-mark mode
+
+    @Test func canRetractOnlyOurMarkRightBeforeCursor() {
+        #expect(HandsFreeJoin.canRetract(before: "Hi. So we should probably.", mark: ".", previousBody: "So we should probably"))
+        #expect(HandsFreeJoin.canRetract(before: "we should Probably?", mark: "?", previousBody: "we should probably"))
+        // Unreadable field: never delete blind.
+        #expect(!HandsFreeJoin.canRetract(before: nil, mark: ".", previousBody: "we should probably"))
+        // User typed a space / more text / moved the cursor: leave it.
+        #expect(!HandsFreeJoin.canRetract(before: "we should probably. ", mark: ".", previousBody: "we should probably"))
+        #expect(!HandsFreeJoin.canRetract(before: "we should probably", mark: ".", previousBody: "we should probably"))
+        #expect(!HandsFreeJoin.canRetract(before: "Dear Sam.", mark: ".", previousBody: "we should probably"))
+        // A different mark than the one we typed.
+        #expect(!HandsFreeJoin.canRetract(before: "we should probably!", mark: ".", previousBody: "we should probably"))
+    }
+
+    @Test func joinedAfterShownMark() {
+        #expect(HandsFreeJoin.joinedAfterShown(decision: .continuation, next: "Move the deploy") == (1, " move the deploy"))
+        #expect(HandsFreeJoin.joinedAfterShown(decision: .continuation, next: "I think so") == (1, " I think so"))
+        #expect(HandsFreeJoin.joinedAfterShown(decision: .sentenceBreak, next: "Send it") == (0, " Send it"))
+        #expect(HandsFreeJoin.joinedAfterShown(decision: .unmatched, next: "Send it") == (0, " Send it"))
+    }
+
+    @Test func shownMarkIsNotRetypedAtStop() {
+        var j = HeldMarkJoiner()
+        _ = j.accept("Done.", pid: 1)
+        j.markShown()
+        #expect(j.held?.shown == true)
+        #expect(j.stop() == nil)
+        // Next piece after a shown mark still needs a join, and reports it shown.
+        _ = j.accept("First.", pid: 1)
+        j.markShown()
+        guard case .needsJoin(let held, _) = j.accept("second.", pid: 1) else { Issue.record("expected join"); return }
+        #expect(held.shown)
+        #expect(j.held?.shown == false) // the new piece's mark isn't shown yet
+    }
+
+    @Test func memoryForgetsRetractedMark() {
+        var m = DictationMemory()
+        m.recordTyped("we should probably.", intoPID: 7)
+        m.recordDeletedBackward(1, inPID: 7)
+        #expect(m.tailIfStillFocused(pid: 7)?.hasSuffix("probably") == true)
+        m.recordDeletedBackward(1, inPID: 8) // other app: untouched
+        #expect(m.tailIfStillFocused(pid: 7)?.hasSuffix("probabl") == false)
+    }
+
     // MARK: joined
 
     @Test func joinedText() {
