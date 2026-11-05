@@ -27,6 +27,8 @@ usage: susurro-cli [--post] <model.bin | parakeet-model-dir> <audio-file> [audio
 """
 
 var post = false
+var handsFree = false   // --handsfree: segment each file like the app's hands-free pump and join (BEA-657)
+var minPause: Double?
 var engineKind: EngineKind?
 var modelPath: String?
 var positional: [String] = []
@@ -34,6 +36,10 @@ var it = CommandLine.arguments.dropFirst().makeIterator()
 while let a = it.next() {
     switch a {
     case "--post": post = true
+    case "--handsfree": handsFree = true
+    case "--min-pause":
+        guard let v = it.next(), let d = Double(v) else { errPrint(usage); exit(1) }
+        minPause = d
     case "--engine":
         guard let v = it.next(), let k = EngineKind(rawValue: v) else {
             errPrint("--engine must be one of: \(EngineKind.allCases.map(\.rawValue).joined(separator: ", "))")
@@ -105,6 +111,66 @@ do {
     // from DefaultRules, so results don't depend on the developer's rules.json.
     let processor = PostProcessor(userRulesURL: FileManager.default.temporaryDirectory
         .appendingPathComponent("susurro-cli-\(UUID().uuidString)/rules.json"))
+    if handsFree {
+        // Mirrors AppDelegate's hands-free pump: PauseSegmenter cuts, each chunk
+        // transcribed alone (filter + PostProcessor, no sentence case), held
+        // marks decided from a joint clip. Prints one JSON object per file.
+        func clean(_ s: String) -> String {
+            let f = TranscriptFilter.stripHallucinations(s, engine: engine.kind)
+            return f.isEmpty ? "" : processor.process(f, applySentenceCase: false)
+        }
+        for path in positional {
+            let samples = try AudioFileLoader.loadSamples(url: URL(fileURLWithPath: path))
+            var config = PauseSegmenter.Config()
+            if let minPause { config.minPause = minPause }
+            var seg = PauseSegmenter(config: config)
+            var cuts: [PauseSegmenter.Cut] = []
+            var fed = 0
+            while fed < samples.count { // feed in 100 ms blocks like the pump
+                let end = min(samples.count, fed + 1600)
+                cuts += seg.append(Array(samples[fed..<end])); fed = end
+            }
+            if let last = seg.finish(totalSamples: samples.count) { cuts.append(last) }
+            var joiner = HeldMarkJoiner()
+            var prev: (samples: [Float], last: Int)?
+            var start = 0
+            var chunkTexts: [String] = [], decisions: [String] = [], typed = ""
+            var jointSeconds = 0.0
+            for cut in cuts {
+                let s0 = HandsFreeJoin.trimmedStart(chunkStart: start, firstSpeech: cut.firstSpeech)
+                let chunk = Array(samples[s0..<cut.sample]); start = cut.sample
+                guard cut.hasSpeech else { continue }
+                let text = clean(try engine.transcribe(samples: chunk))
+                guard !text.isEmpty else { continue }
+                chunkTexts.append(text)
+                let first = max(0, (cut.firstSpeech ?? s0) - s0)
+                let lastS = min(chunk.count, max(0, (cut.lastSpeech ?? cut.sample) - s0))
+                let previous = prev
+                prev = (chunk, lastS)
+                switch joiner.accept(text, pid: 1) {
+                case .fresh(let t):
+                    // The app's text stage: after unmarked text, ContinuationCase.
+                    let ctx = InsertContext(before: typed.isEmpty ? nil : typed, source: .selfTracked)
+                    typed += (typed.isEmpty ? "" : " ") + (typed.isEmpty ? t : ContinuationCase().apply(t, ctx))
+                case .needsJoin(let held, let next):
+                    let clip = HandsFreeJoin.jointClip(a: previous!.samples, aLastSpeechEnd: previous!.last,
+                                                       b: chunk, bFirstSpeechStart: first)
+                    let t0 = Date()
+                    let joint = clean(try engine.transcribe(samples: clip))
+                    jointSeconds += -t0.timeIntervalSinceNow
+                    let d = HandsFreeJoin.decide(previousBody: held.body, jointText: joint)
+                    decisions.append("\(d)")
+                    typed += HandsFreeJoin.joined(mark: held.mark, decision: d, next: next)
+                }
+            }
+            if let m = joiner.stop() { typed.append(m) }
+            let out: [String: Any] = ["file": (path as NSString).lastPathComponent, "chunks": chunkTexts,
+                                      "decisions": decisions, "typed": typed, "jointSeconds": jointSeconds]
+            let data = try JSONSerialization.data(withJSONObject: out, options: [.sortedKeys])
+            print(String(data: data, encoding: .utf8)!)
+        }
+        exit(0)
+    }
     for path in positional {
         let url = URL(fileURLWithPath: path)
         let samples = devPadded(try AudioFileLoader.loadSamples(url: url))
