@@ -63,7 +63,19 @@ public final class AudioRecorder: @unchecked Sendable {
         isRecording = true
     }
 
-    /// Stops capture and returns everything recorded since `start()`.
+    /// Hands-free (BEA-651): returns the samples captured since `start()` or the
+    /// last call, and keeps recording. `stop()` then returns only the rest, so
+    /// every sample is handed out exactly once.
+    public func takeAvailable() -> [Float] {
+        lock.lock()
+        defer { lock.unlock() }
+        let captured = samples
+        samples.removeAll(keepingCapacity: true)
+        return captured
+    }
+
+    /// Stops capture and returns everything recorded since `start()` (or since
+    /// the last `takeAvailable()`).
     public func stop() -> [Float] {
         guard isRecording else { return [] }
         engine.inputNode.removeTap(onBus: 0)

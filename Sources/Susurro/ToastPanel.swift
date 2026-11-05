@@ -1,19 +1,31 @@
 import AppKit
 
 /// Transient toast in the overlay's corner: instant acknowledgment of a user
-/// action (e.g. "downloading model…"). Auto-dismisses. For events that complete
+/// action (e.g. "downloading model…"). Auto-dismisses. Every toast carries the
+/// app icon and a bold "Susurro" prefix so it is clear where it came from
+/// (board, BEA-651). For events that complete
 /// while the user's attention may be elsewhere, use a notification instead.
 @MainActor
 final class ToastPanel {
     private let panel: NSPanel
     private let label: NSTextField
+    private let icon: NSImageView
+    private static let iconSize: CGFloat = 18
     private var dismissTask: Task<Void, Never>?
 
     init() {
         label = NSTextField(labelWithString: "")
         label.font = .systemFont(ofSize: 13, weight: .medium)
         label.textColor = .white
-        label.alignment = .center
+        label.alignment = .left
+
+        icon = NSImageView()
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns") {
+            icon.image = NSImage(contentsOf: url)
+        } else {
+            icon.image = NSApp.applicationIconImage
+        }
 
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 100, height: 40),
@@ -30,22 +42,29 @@ final class ToastPanel {
         panel.hidesOnDeactivate = false
 
         let background = ToastBackgroundView()
+        background.addSubview(icon)
         background.addSubview(label)
         panel.contentView = background
     }
 
     func show(_ message: String, seconds: TimeInterval = 4) {
-        label.stringValue = message
+        let text = NSMutableAttributedString(string: "Susurro  ", attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .bold),
+            .foregroundColor: NSColor.white,
+        ])
+        text.append(NSAttributedString(string: message, attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.92),
+        ]))
+        label.attributedStringValue = text
         label.sizeToFit()
 
-        let padding = NSSize(width: 40, height: 22)
-        let size = NSSize(width: label.frame.width + padding.width,
-                          height: label.frame.height + padding.height)
+        let side: CGFloat = 16, gap: CGFloat = 8, iconSize = Self.iconSize
+        let height = max(label.frame.height, iconSize) + 22
+        let size = NSSize(width: side + iconSize + gap + label.frame.width + side + 4, height: height)
         panel.setContentSize(size)
-        label.frame.origin = NSPoint(
-            x: (size.width - label.frame.width) / 2,
-            y: (size.height - label.frame.height) / 2
-        )
+        icon.frame = NSRect(x: side, y: (height - iconSize) / 2, width: iconSize, height: iconSize)
+        label.frame.origin = NSPoint(x: side + iconSize + gap, y: (height - label.frame.height) / 2)
 
         if let screen = NSScreen.main {
             let margin: CGFloat = 16

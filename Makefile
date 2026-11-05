@@ -78,7 +78,8 @@ clean:
 
 # Cut a release end-to-end: build the zip, pin its SHA256 in the tap, publish the
 # GitHub release, push the tap, then verify the published asset matches the pin.
-# Usage: make release
+# Usage: make release   (a version with a hyphen, e.g. 0.2.0-beta.1, is
+#        published as a GitHub pre-release; the cask is still bumped)
 # Requires: gh authenticated, and $(TAP) to exist
 #           (clone https://github.com/mtwomey/homebrew-susurro)
 #
@@ -101,7 +102,8 @@ release: dist
 	@sed -i '' "s/^  version \".*\"/  version \"$(VERSION)\"/" $(CASK)
 	@sed -i '' "s/^  sha256 \".*\"/  sha256 \"$(SHA)\"/" $(CASK)
 	@echo "✓ Pinned in $(CASK)"
-	@gh release create "v$(VERSION)" $(ZIP) --title "$(APP_NAME) $(VERSION)" --generate-notes
+	@gh release create "v$(VERSION)" $(ZIP) --title "$(APP_NAME) $(VERSION)" --generate-notes \
+		$(if $(findstring -,$(VERSION)),--prerelease,)
 	@echo "✓ Published release v$(VERSION)"
 	@git -C $(TAP) commit -qam "Bump to $(VERSION)" && git -C $(TAP) push -q
 	@echo "✓ Pushed tap"

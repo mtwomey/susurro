@@ -9,12 +9,21 @@ enum TextHandlingLog {
     static let url: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/Susurro/text-handling.log")
 
+    static let maxBytes = 1_000_000
+
     static func record(_ line: String) {
         slog("ptt: context \(line)")
         let stamp = ISO8601DateFormatter().string(from: Date())
         let data = Data("\(stamp) \(line)\n".utf8)
         let fm = FileManager.default
         try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // Keep it bounded: past 1 MB, the current file becomes .1 (replacing
+        // any older one) and a fresh file starts.
+        if let size = (try? fm.attributesOfItem(atPath: url.path))?[.size] as? Int, size > maxBytes {
+            let old = url.appendingPathExtension("1")
+            try? fm.removeItem(at: old)
+            try? fm.moveItem(at: url, to: old)
+        }
         if let handle = try? FileHandle(forWritingTo: url) {
             defer { try? handle.close() }
             _ = try? handle.seekToEnd()
