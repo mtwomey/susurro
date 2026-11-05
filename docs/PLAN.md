@@ -26,7 +26,7 @@ Built for Matthew first, but clean enough to hand to a coworker.
 | Engine | whisper.cpp **in-process** (C API, Metal), small.en default | Spike: beats SpeechTranscriber on technical vocab and verbal punctuation; engine behind a protocol so SpeechTranscriber stays one implementation away |
 | NeMo ITN | **Dropped** | Spike: whisper output already ITN-formats numbers/dates/currency; port residual rules only if gaps appear in daily use |
 | Punctuation layer | Port the quote/comma/period regexes to Swift | Parity; whisper already handles quote→" natively, layer covers the rest |
-| Hotkey | Configurable hold-key (push-to-talk), Right Alt default | Shareability; toggle mode deferred |
+| Hotkey | Configurable hold-key (push-to-talk), Right Alt default | Shareability; hands-free latch added later (hold + tap latch key, BEA-651) |
 | Overlay | Non-activating NSPanel: live waveform + elapsed timer, no text preview | Never steals focus → deletes the entire save/restore-focus dance; text preview possible in v2 without rework |
 | LLM cleanup | v1, **opt-in** (settings toggle), Foundation Models on-device | ~0.3–1s extra on short dictations; off the default path |
 | History | **Dropped from v1**; transcripts not persisted | Revisit in v2 (menu bar list first, window later) |
