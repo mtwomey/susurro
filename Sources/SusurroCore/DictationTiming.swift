@@ -31,6 +31,7 @@ public enum GatedChunk {
                            insert: @MainActor (String) -> Void) async -> Bool {
         guard gate().isCurrent(token) else { return false }
         let text = await transcribe()
+        guard gate().isCurrent(token) else { return false }
         insert(text)
         return true
     }

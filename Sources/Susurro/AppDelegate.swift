@@ -58,7 +58,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hfBundleID: String?
     private var hfAppObserver: NSObjectProtocol?
     private var hfInsertChain: Task<Void, Never>?
-    private var hfGeneration = 0            // bumped on cancel: queued chunks are dropped
+    // Cancel (Esc) moves the gate on: queued chunks are dropped, and a chunk
+    // already mid-transcription is dropped at insert time (BEA-663, F2).
+    private var hfGate = SessionGate()
     // Hands-free joins (BEA-657): each chunk's final end mark is held back and
     // decided from a joint transcript across the pause when the next chunk lands.
     private var hfJoiner = HeldMarkJoiner()
@@ -750,7 +752,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// into the wrong app. nil = today's push-to-talk behaviour, unchanged.
     @discardableResult
     private func transcribeAndInsert(_ samples: [Float], releasePID: pid_t?, releaseBundleID: String?,
-                                     expectedPID: pid_t?, hfChunk: HFChunk? = nil) -> Task<Void, Never>? {
+                                     expectedPID: pid_t?, hfChunk: HFChunk? = nil,
+                                     hfToken: Int? = nil) -> Task<Void, Never>? {
         guard let engine else { return nil }
         let postProcessor = postProcessor
         let cleaner = cleanupEnabled ? self.cleaner : nil
@@ -758,13 +761,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Accessibility while the engine transcribes; capped at 250 ms.
         // Smart Spacing is the stage's master toggle — off means no read and
         // the old context-free behaviour (sentence case only).
-        var fieldTask: Task<FieldSnapshot?, Never>?
+        var fieldTask: Task<(FieldSnapshot?, Duration), Never>?
         if smartSpacingEnabled, !IsSecureEventInputEnabled(), let pid = releasePID {
-            fieldTask = Task.detached(priority: .userInitiated) { await FocusedFieldReader.read(pid: pid, bundleID: releaseBundleID) }
+            fieldTask = Task.detached(priority: .userInitiated) {
+                let clock = ContinuousClock(), start = clock.now
+                let snapshot = await FocusedFieldReader.read(pid: pid, bundleID: releaseBundleID)
+                return (snapshot, clock.now - start)
+            }
         }
         let pendingFieldRead = fieldTask
         return Task.detached(priority: .userInitiated) {
+            let clock = ContinuousClock()
+            var timings = StageTimings()
             let transcript: String
+            let transcribeStart = clock.now
             do {
                 transcript = try engine.transcribe(samples: samples)
             } catch {
@@ -774,6 +784,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 transcript = ""
             }
+            timings.transcribe = clock.now - transcribeStart
             let raw = TranscriptFilter.stripHallucinations(transcript, engine: engine.kind)
             // Sentence case is deferred to the pre-insert stage, which can see
             // what precedes the cursor.
@@ -782,7 +793,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 cleaned = await cleaner.clean(cleaned) ?? cleaned
             }
             slog("ptt: transcript: \(raw) -> \(cleaned)")
-            let fieldRead = await pendingFieldRead?.value
+            let fieldResult = await pendingFieldRead?.value
+            let fieldRead = fieldResult?.0
+            timings.axRead = fieldResult?.1
             let autoCapitalize = postProcessor.autoCapitalizeEnabled
             // Hands-free joins (BEA-657): hold this chunk's final mark; if the
             // previous chunk's mark is held, decide it from a joint transcript.
@@ -794,7 +807,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             var processed = cleaned
             if let hfChunk, !cleaned.isEmpty {
                 let step = await MainActor.run { [weak self] () -> (HeldMarkJoiner.Plan, HFChunk?)? in
-                    guard let self else { return nil }
+                    // Cancelled while this chunk was transcribing: leave the
+                    // joiner alone (it may already belong to a new session).
+                    guard let self, self.hfGate.isCurrent(hfToken) else { return nil }
                     let previous = self.hfPrevChunk
                     let plan = self.hfJoiner.accept(cleaned, pid: expectedPID)
                     self.hfPrevChunk = hfChunk
@@ -806,7 +821,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 case (.needsJoin(let held, let next), let previous?)?:
                     let clip = HandsFreeJoin.jointClip(a: previous.samples, aLastSpeechEnd: previous.lastSpeech,
                                                        b: hfChunk.samples, bFirstSpeechStart: hfChunk.firstSpeech)
+                    let joinStart = clock.now
                     let jointRaw = (try? engine.transcribe(samples: clip)) ?? ""
+                    timings.joinTranscribe = clock.now - joinStart
                     let joint = postProcessor.process(TranscriptFilter.stripHallucinations(jointRaw, engine: engine.kind),
                                                       applySentenceCase: false)
                     let decision = HandsFreeJoin.decide(previousBody: held.body, jointText: joint)
@@ -825,8 +842,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let joinAfter = heldBody
             let prevShown = heldShown, prevMark = heldMark, decision = joinDecision
             let isHandsFree = hfChunk != nil
+            let stageTimings = timings
             await MainActor.run { [weak self] in
-                guard let self, !processed.isEmpty || joinText != nil else { return }
+                guard let self else { return }
+                guard self.hfGate.isCurrent(hfToken) else {
+                    slog("handsfree: chunk dropped — session cancelled during transcription")
+                    return
+                }
+                guard !processed.isEmpty || joinText != nil else { return }
                 // Secure input (password fields) silently blocks synthetic typing —
                 // in that case copy regardless of the setting so the words aren't lost.
                 let secureInputActive = IsSecureEventInputEnabled()
@@ -895,7 +918,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     if HandsFreeJoin.isInPlace(before: context.before, previousBody: joinAfter) { text = joinText } else { slog("handsfree: cursor moved, join skipped") }
                 }
                 let readDetail = fieldRead?.detail ?? (pendingFieldRead == nil ? "notRead" : "timeout")
-                TextHandlingLog.record("source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)")
+                // Logged once per dictation, after insertion, with per-stage
+                // timings (BEA-663, F8). Numbers only — never field text.
+                let logLine = "source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)"
+                var lineTimings = stageTimings
                 // Show this piece's own end mark now if the field is readable;
                 // otherwise it stays held (typed at the next join or at stop).
                 var showingMark = false
@@ -903,13 +929,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     text.append(mark)
                     showingMark = true
                 }
-                guard !text.isEmpty else { return }
+                guard !text.isEmpty else {
+                    TextHandlingLog.record("\(logLine) \(lineTimings.logFields)")
+                    return
+                }
+                let insertStart = ContinuousClock.now
                 if deleteCount > 0, let frontmostPID {
                     TextInjector.deleteBackward(deleteCount)
                     self.dictationMemory.recordDeletedBackward(deleteCount, inPID: frontmostPID)
                     slog("handsfree: retracted shown mark")
                 }
                 let typed = TextInjector.type(text)
+                lineTimings.insert = ContinuousClock.now - insertStart
+                TextHandlingLog.record("\(logLine) \(lineTimings.logFields)")
                 if showingMark && typed { self.hfJoiner.markShown() }
                 if !secureInputActive, typed, let frontmostPID {
                     // Where the insertion ended inside a cursorless value, so the
@@ -1034,14 +1066,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard hasSpeech else { return }
         slog("handsfree: chunk \(chunk.count) samples")
         let previous = hfInsertChain
-        let generation = hfGeneration
+        let generation = hfGate.token
         let pid = hfPID, bundleID = hfBundleID
         // Chunks are transcribed and typed strictly in order.
         hfInsertChain = Task { @MainActor [weak self] in
             await previous?.value
-            guard let self, generation == self.hfGeneration else { return }
+            guard let self, self.hfGate.isCurrent(generation) else { return }
             await self.transcribeAndInsert(chunk, releasePID: pid, releaseBundleID: bundleID,
-                                           expectedPID: pid, hfChunk: info)?.value
+                                           expectedPID: pid, hfChunk: info, hfToken: generation)?.value
         }
     }
 
@@ -1060,11 +1092,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // After the last chunk is typed, type its held end mark (BEA-657),
             // only if the same app is still frontmost.
             let previous = hfInsertChain
-            let generation = hfGeneration
+            let generation = hfGate.token
             let pid = hfPID
             hfInsertChain = Task { @MainActor [weak self] in
                 await previous?.value
-                guard let self, generation == self.hfGeneration else { return }
+                guard let self, self.hfGate.isCurrent(generation) else { return }
                 self.hfPrevChunk = nil
                 guard let mark = self.hfJoiner.stop() else { return }
                 let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
@@ -1074,7 +1106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
         } else {
-            hfGeneration += 1 // drop chunks not yet typed
+            hfGate.cancel() // drop chunks not yet typed, incl. one mid-transcription
             hfJoiner.discard() // and the held mark with them
             hfPrevChunk = nil
         }

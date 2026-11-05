@@ -18,22 +18,10 @@ enum FocusedFieldReader {
     private static let lock = NSLock()
 
     static func read(pid: pid_t, bundleID: String?, cap: Duration = .milliseconds(250)) async -> FieldSnapshot? {
-        await withTaskGroup(of: FieldSnapshot??.self) { group in
-            group.addTask {
-                await withCheckedContinuation { continuation in
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        continuation.resume(returning: readNow(pid: pid, bundleID: bundleID))
-                    }
-                }
-            }
-            group.addTask {
-                try? await Task.sleep(for: cap)
-                return .some(nil)
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first ?? nil
-        }
+        // A real cap (BEA-663, F5): a task group would wait for the
+        // non-cancellable AX child; this returns nil at the cap and drops a
+        // late result.
+        await CappedRead.run(cap: cap) { readNow(pid: pid, bundleID: bundleID) }
     }
 
     /// Synchronous read; blocking AX IPC, so never call on the main thread.
