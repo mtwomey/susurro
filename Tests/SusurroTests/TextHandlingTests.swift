@@ -136,3 +136,43 @@ import Testing
         #expect(!read.detail.contains("hello"))
     }
 }
+
+@Suite struct BufferTailTests {
+    let stage = TextHandlingStage.standard(smartSpacing: true, autoCapitalize: true)
+
+    func ctx(buffer: String, memory: String) -> InsertContext {
+        InsertContext.resolve(fieldRead: FieldRead(before: nil, bufferTail: buffer),
+                              memoryTail: memory, pid: 1, bundleID: "dev.warp.Warp-Stable",
+                              engine: nil, secureInput: false)
+    }
+
+    @Test func deletedFullStopIsSeenInWarp() {
+        let c = ctx(buffer: "$ echo\nHello there", memory: "Hello there.")
+        #expect(c.source == .bufferTail)
+        #expect(stage.apply("And then we left.", c) == " and then we left.")
+    }
+
+    @Test func typedSpaceIsSeenInWarp() {
+        let c = ctx(buffer: "prompt> Hello there. ", memory: "Hello there.")
+        #expect(stage.apply("it was late.", c) == "It was late.")
+    }
+
+    @Test func trailingNewlinesInBufferAreIgnored() {
+        let c = ctx(buffer: "x Hello there\n\n", memory: "Hello there.")
+        #expect(c.source == .bufferTail)
+    }
+
+    @Test func unrelatedBufferEndFallsBackToMemory() {
+        let c = ctx(buffer: "lots of new output scrolled in here", memory: "Hello there.")
+        #expect(c.source == .selfTracked)
+        let far = ctx(buffer: "Hello there. plus much more typed", memory: "Hello there.")
+        #expect(far.source == .selfTracked)
+    }
+
+    @Test func noMemoryMeansNoBufferContext() {
+        let c = InsertContext.resolve(fieldRead: FieldRead(before: nil, bufferTail: "abc"),
+                                      memoryTail: nil, pid: 1, bundleID: nil, engine: nil,
+                                      secureInput: false)
+        #expect(c.source == .none)
+    }
+}

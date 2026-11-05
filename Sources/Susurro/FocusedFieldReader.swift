@@ -77,8 +77,11 @@ enum FocusedFieldReader {
             return FieldRead(before: before, after: value.map { String($0.dropFirst(before.count)) },
                              detail: "markers beforeLen=\(before.count) role=\(role ?? "?")")
         }
+        // Whole buffer, no cursor (Warp, Terminal): keep the end of the value
+        // for the BufferTail heuristic, which needs the memory anchor.
         return FieldRead(before: nil, after: nil,
-                         detail: "unreadable role=\(role ?? "?") hasValue=\(value != nil)")
+                         detail: "unreadable role=\(role ?? "?") hasValue=\(value != nil)",
+                         bufferTail: value.map { String($0.suffix(512)) })
     }
 
     private static func enableManualAccessibilityOnce(app: AXUIElement, pid: pid_t) {
