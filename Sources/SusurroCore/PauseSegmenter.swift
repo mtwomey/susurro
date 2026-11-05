@@ -35,6 +35,20 @@ public struct PauseSegmenter: Sendable {
         public let sample: Int
         /// False when the segment held no speech frames; callers may skip it.
         public let hasSpeech: Bool
+        /// Absolute sample range of the segment's speech frames (first speech
+        /// frame start ..< last speech frame end); nil without speech. Used by
+        /// hands-free joins (BEA-657) to build the joint clip.
+        public let firstSpeech: Int?
+        public let lastSpeech: Int?
+
+        public init(sample: Int, hasSpeech: Bool, firstSpeech: Int? = nil, lastSpeech: Int? = nil) {
+            self.sample = sample
+            self.hasSpeech = hasSpeech
+            self.firstSpeech = firstSpeech
+            self.lastSpeech = lastSpeech
+        }
+
+        public static func == (l: Cut, r: Cut) -> Bool { l.sample == r.sample && l.hasSpeech == r.hasSpeech }
     }
 
     public let config: Config
@@ -73,9 +87,10 @@ public struct PauseSegmenter: Sendable {
     /// End of recording: the final segment runs to `totalSamples`.
     public mutating func finish(totalSamples: Int) -> Cut? {
         let hasSpeech = frames.contains { $0.speech }
+        let bounds = speechBounds(frames.count)
         defer { reset(at: totalSamples) }
         guard totalSamples > segmentStart else { return nil }
-        return Cut(sample: totalSamples, hasSpeech: hasSpeech)
+        return Cut(sample: totalSamples, hasSpeech: hasSpeech, firstSpeech: bounds?.0, lastSpeech: bounds?.1)
     }
 
     private mutating func reset(at sample: Int) {
@@ -129,9 +144,18 @@ public struct PauseSegmenter: Sendable {
 
     private mutating func cut(atFrame n: Int) -> Cut {
         let hasSpeech = frames[..<n].contains { $0.speech }
+        let bounds = speechBounds(n)
         let sample = segmentStart + n * frameLen
         frames.removeFirst(n)
         segmentStart = sample
-        return Cut(sample: sample, hasSpeech: hasSpeech)
+        return Cut(sample: sample, hasSpeech: hasSpeech, firstSpeech: bounds?.0, lastSpeech: bounds?.1)
+    }
+
+    /// Absolute (first speech start, last speech end) within frames[..<n].
+    private func speechBounds(_ n: Int) -> (Int, Int)? {
+        let slice = frames[..<min(n, frames.count)]
+        guard let first = slice.firstIndex(where: { $0.speech }),
+              let last = slice.lastIndex(where: { $0.speech }) else { return nil }
+        return (segmentStart + first * frameLen, segmentStart + (last + 1) * frameLen)
     }
 }
