@@ -127,6 +127,16 @@ final class HelpWindowController {
         release the key.
         """)
 
+        heading("Menu bar icon")
+        body("""
+        The Susurro icon shows whether dictation is ready: a waveform when \
+        ready, an hourglass while a model loads, a down-arrow while one \
+        downloads, and an exclamation mark if loading failed. The first \
+        Parakeet load after install (and possibly after a macOS update) can take about 20 \
+        seconds while macOS compiles the model. If you press the key before \
+        it's ready, a notice tells you why nothing happened.
+        """)
+
         heading("System permissions")
         body("""
         Susurro needs two permissions, both under System Settings → Privacy & \

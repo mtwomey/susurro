@@ -49,6 +49,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Bumped on every loadEngine() call; a load that finishes after a newer
     // one started (fast menu switching) is discarded instead of winning.
     private var engineGeneration = 0
+    /// Why there's no engine right now, for user-visible feedback. The menu
+    /// status item alone is invisible unless the menu is open, and a cold
+    /// Parakeet load (Core ML compile) takes ~20 s, so without this the app
+    /// looked broken: push-to-talk silently did nothing.
+    private enum EngineState { case loading, downloading, failed, ready }
+    private var engineState: EngineState = .loading {
+        didSet { updateStatusIcon() }
+    }
+    /// A load slower than this gets a "still loading" toast and a "ready" toast.
+    private static let slowLoadThreshold: TimeInterval = 1.5
     private var axPollTimer: Timer?
 
     // Set once if the mic-permission callback reports denial. Sticky for the
@@ -339,6 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.rebuildModelMenu()
             } catch {
                 slog("auto-download failed: \(error)")
+                self?.engineState = .failed
                 self?.setStatus("Model download failed — retry from the Model menu")
                 self?.notify("Model download failed",
                              "Open the Model menu to retry. \(error.localizedDescription)")
@@ -388,6 +399,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// ready and available via the push-to-talk hotkey. Never clears a
     /// mic-access-denied warning (see setStatus) — that's sticky for the
     /// rest of the run.
+    /// Menu bar icon reflects engine readiness, so a loading app doesn't look
+    /// identical to a ready one.
+    private func updateStatusIcon() {
+        guard let button = statusItem?.button else { return }
+        let (symbol, tip): (String, String) = switch engineState {
+        case .ready: ("waveform.circle", "Susurro")
+        case .loading: ("hourglass.circle", "Susurro — loading model…")
+        case .downloading: ("arrow.down.circle", "Susurro — downloading model…")
+        case .failed: ("exclamationmark.circle", "Susurro — model load failed")
+        }
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+        button.toolTip = tip
+    }
+
     private func clearStatus() {
         guard !micAccessDenied else { return }
         if let menu = statusItem.menu, menu.items.contains(recordItem) {
@@ -400,6 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let generation = engineGeneration
         guard let path = models.activeModelPath() else {
             setStatus("Downloading model…")
+            engineState = .downloading
             autoDownloadDefaultModel()
             return
         }
@@ -408,7 +434,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // resident; push-to-talk is ignored while engine is nil.
         engine = nil
         setStatus("Loading model…")
+        engineState = .loading
         slog("loading model (\(kind?.rawValue ?? "?")): \(path)")
+        let modelName = models.activeModelID
+        let loadStart = Date()
+        // Only announce slow loads, so the usual sub-second load stays silent.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.slowLoadThreshold) { [weak self] in
+            guard let self, generation == self.engineGeneration, self.engine == nil,
+                  self.engineState == .loading else { return }
+            self.toast.show(
+                "Loading \(modelName)… the first load after install can take ~20 s",
+                seconds: 6
+            )
+        }
         Task.detached(priority: .userInitiated) {
             do {
                 let start = Date()
@@ -420,12 +458,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         return
                     }
                     self.engine = engine
+                    self.engineState = .ready
                     self.clearStatus()
+                    if -loadStart.timeIntervalSinceNow >= Self.slowLoadThreshold {
+                        self.toast.show("✓ \(modelName) ready — hold \(self.hotkey.key.title) to dictate")
+                    }
                 }
             } catch {
                 slog("model load FAILED: \(error)")
                 await MainActor.run { [weak self] in
                     guard let self, generation == self.engineGeneration else { return }
+                    self.engineState = .failed
                     self.setStatus("Model load failed")
                 }
             }
@@ -607,7 +650,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func pttPressed() {
-        guard engine != nil, !recorder.isRecording else { return }
+        guard !recorder.isRecording else { return }
+        guard engine != nil else {
+            // Never ignore the key silently: say why nothing is happening.
+            switch engineState {
+            case .loading:
+                toast.show("Model still loading — dictation will be ready in a few seconds")
+            case .downloading:
+                toast.show("Model still downloading — dictation starts when it's ready")
+            case .failed:
+                toast.show("Model failed to load — pick a model from the Susurro menu")
+            case .ready:
+                break
+            }
+            return
+        }
         do {
             try recorder.start()
             slog("ptt: recording")
