@@ -34,7 +34,7 @@ public enum HandsFreeJoin {
         case unmatched
     }
 
-    struct Token { let norm: String; let trailing: String }
+    struct Token { let norm: String; let trailing: String; var startsLower = false }
 
     static func tokens(_ text: String) -> [Token] {
         text.split(whereSeparator: { $0.isWhitespace }).compactMap { raw in
@@ -46,7 +46,8 @@ public enum HandsFreeJoin {
                 if ch.isLetter || ch.isNumber { break }
                 trailing.insert(ch, at: trailing.startIndex)
             }
-            return Token(norm: norm, trailing: trailing)
+            let firstLetter = raw.first(where: { $0.isLetter })
+            return Token(norm: norm, trailing: trailing, startsLower: firstLetter?.isLowercase ?? false)
         }
     }
 
@@ -74,7 +75,13 @@ public enum HandsFreeJoin {
                 let end = j[start + k - 1]
                 // Nothing of B in the joint text: no evidence either way.
                 guard start + k < j.count else { return .unmatched }
-                return end.trailing.contains(where: { endMarks.contains($0) }) ? .sentenceBreak : .continuation
+                guard end.trailing.contains(where: { endMarks.contains($0) }) else { return .continuation }
+                // "3:30 p.m. on Friday": a period followed by a lower-case
+                // word is an abbreviation, not a sentence end.
+                if !end.trailing.contains(where: { $0 == "?" || $0 == "!" }), j[start + k].startsLower {
+                    return .continuation
+                }
+                return .sentenceBreak
             }
         }
         return .unmatched

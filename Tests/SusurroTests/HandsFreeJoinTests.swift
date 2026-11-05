@@ -61,6 +61,11 @@ struct HandsFreeJoinTests {
                                      jointText: "meet at 3:30 p.m. Bring the slides.") == .sentenceBreak)
     }
 
+    @Test func abbreviationBeforeLowercaseIsContinuation() {
+        #expect(HandsFreeJoin.decide(previousBody: "The meeting is at 3:30 p.m",
+                                     jointText: "The meeting is at 3:30 p.m. on January 22nd.") == .continuation)
+    }
+
     // MARK: joined
 
     @Test func joinedText() {
