@@ -14,6 +14,13 @@ automated: real apps, real permissions, real hardware events.
 - [ ] Clipboard toggle off (default): dictating leaves existing clipboard
       contents untouched; toggle on: transcript is copied
 - [ ] Rapid dictations back-to-back — no overlap, no dropped transcripts
+- [ ] Hands-free: hold PTT, tap latch key, release — overlay turns blue
+      (HANDS-FREE); text typed at each pause; tap PTT stops and types the rest
+- [ ] Hands-free: Esc discards untyped audio; Esc passes through when not latched
+- [ ] Hands-free: 60 s silence → warning at 50 s, stop at 60 s; app switch stops
+      and nothing lands in the other app
+- [ ] Hands-free: PTT = Right Command → latch is Right Option; menu never offers
+      the PTT key as latch key
 - [ ] Hold key, say nothing, release — nothing typed (hallucination filter)
 - [ ] Very long dictation (60s+) — transcript complete, memory returns to baseline
 

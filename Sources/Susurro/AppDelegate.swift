@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var recordItem: NSMenuItem!
     private var hotkeyItem: NSMenuItem!
+    private var latchItem: NSMenuItem!
 
     // Production capture: AVAudioEngine. Alternatives evaluated and documented in
     // docs/PLAN.md ("mic-mode pill"): HALAudioRecorder (raw CoreAudio — still pills),
@@ -133,6 +134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         keyItem.submenu = keyMenu
         menu.addItem(keyItem)
+
+        // Hands-free latch key (BEA-651): never the push-to-talk key.
+        latchItem = NSMenuItem(title: "Hands-Free Latch Key", action: nil, keyEquivalent: "")
+        latchItem.submenu = NSMenu(title: "Hands-Free Latch Key")
+        menu.addItem(latchItem)
+        rebuildLatchMenu()
 
         menu.addItem(.separator())
 
@@ -640,9 +647,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkey.key = choice
         choice.save()
         hotkey.latchKey = PTTKey.latch(for: choice)
+        rebuildLatchMenu()
         sender.menu?.items.forEach { $0.state = ($0 == sender) ? .on : .off }
         setHotkeyStatus("hold \(choice.title) to dictate")
         toast.show("Push-to-talk key is now \(choice.title)")
+    }
+
+    private func rebuildLatchMenu() {
+        guard let latchMenu = latchItem?.submenu else { return }
+        latchMenu.removeAllItems()
+        for id in LatchKeyResolver.choices(ptt: hotkey.key.id) {
+            guard let choice = PTTKey.all.first(where: { $0.id == id }) else { continue }
+            let item = NSMenuItem(title: choice.title, action: #selector(latchKeyAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = choice.id
+            item.state = choice == hotkey.latchKey ? .on : .off
+            latchMenu.addItem(item)
+        }
+    }
+
+    @objc private func latchKeyAction(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let choice = PTTKey.all.first(where: { $0.id == id }), choice != hotkey.key else { return }
+        PTTKey.saveLatch(choice)
+        hotkey.latchKey = PTTKey.latch(for: hotkey.key)
+        rebuildLatchMenu()
+        toast.show("Hands-free: hold \(hotkey.key.title), tap \(hotkey.latchKey.title)")
     }
 
     // MARK: - Hotkey (push-to-talk)
