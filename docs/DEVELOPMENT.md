@@ -105,7 +105,7 @@ SUSURRO_DEV_SEED_LEGACY_MODEL=1 ./build/Susurro.app/Contents/MacOS/Susurro
   privacy-redacted, so prefer direct launch).
 - Watch permission attribution: `log stream --predicate 'process == "tccd"'`.
 - Control Center indicator decisions: subsystem `com.apple.cameracapture`
-  in ControlCenter's log (see PLAN.md mic-pill investigation for the method).
+  in ControlCenter's log (see history/PLAN.md mic-pill investigation for the method).
 
 ## Cutting a release
 
@@ -120,11 +120,11 @@ SUSURRO_DEV_SEED_LEGACY_MODEL=1 ./build/Susurro.app/Contents/MacOS/Susurro
 
 Distribution is currently self-signed (rung 1). Moving to Developer ID +
 notarization (`notarytool`) removes the "Open Anyway" step — see the
-"Packaging" discussion in PLAN.md / README.
+"Packaging" discussion in history/PLAN.md / README.
 
 ## Where future work is parked
 
-`PLAN.md` bottom: v2 parking lot (overlay text preview, history, per-app
+`history/PLAN.md` bottom: v2 parking lot (overlay text preview, history, per-app
 formatting, custom PTT key capture flow, streaming AI cleanup, notarization)
 and the mic-pill investigation record. The predecessor Python implementation
 lives in a local ptt checkout (local only) for reference; it is retired

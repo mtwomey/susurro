@@ -66,7 +66,7 @@ Fixtures:
 whole sentence is transcribed in one go, as hold-to-talk.
 
 Results (2026-11-05, Parakeet tdt-v2, full output in
-HANDSFREE_JOINS_EVAL_minpause{0.7,1.0}.txt):
+history/HANDSFREE_JOINS_EVAL_minpause{0.7,1.0}.txt):
 
 | Set | minPause 0.7 | minPause 1.0 (shipped) |
 |---|---|---|
@@ -82,7 +82,7 @@ The only miss at 1.0 is a split-in-word fixture ("from the f. Fifth"), where the
 first piece's own words are already broken.
 
 Long thinking pauses (5 / 10 / 15 s, board note on BEA-657), minPause 1.0,
-HANDSFREE_JOINS_EVAL_longpauses.txt: voice-break 12/12 clean (13/14 incl. v08,
+history/HANDSFREE_JOINS_EVAL_longpauses.txt: voice-break 12/12 clean (13/14 incl. v08,
 whose retake makes 3 pieces the scorer can't grade), voice-mid 7/7 clean
 (14/15 incl. split-in-word/v08), say 12/12. The join is pause-length
 independent: the joint clip caps the pause at 2 s.

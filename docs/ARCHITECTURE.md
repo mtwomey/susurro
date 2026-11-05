@@ -1,17 +1,29 @@
 # Susurro — Architecture (as built)
 
-Companion to `PLAN.md` (the historical design document — read it for *why*
-decisions were made, including investigated-and-rejected alternatives).
-This file describes what actually exists, as of v0.1.9 plus the Parakeet
-engine on `feature/parakeet-v2` (see `PARAKEET_PLAN.md`).
+This file describes what actually exists as of **0.2.0** (push-to-talk,
+hands-free latching with pause-cut chunks and joins, the pre-insert
+text-handling stage, and the whisper.cpp + Parakeet engines).
+
+Finished design docs and plans live in `docs/history/` (start with
+`history/PLAN.md` for *why* decisions were made, including
+investigated-and-rejected alternatives). Live design notes: 
+`TEXT_HANDLING_FINDINGS.md` (text handling) and `HANDSFREE_JOINS.md`
+(hands-free joins). Code removed in the R0 housekeeping (the unused
+`HALAudioRecorder`/`SCKAudioRecorder` capture alternatives and the
+`parakeet-spike` harness) lives on in git history before the
+`chore/r0-housekeeping` merge.
 
 ## Overview
 
 Single-process macOS menu bar app (Swift 6, strict concurrency, SwiftPM — no
 Xcode project). Hold a key → record mic to memory → transcribe in-process with
 the active engine (whisper.cpp, or NVIDIA Parakeet TDT v2 via FluidAudio/Core ML
-on Apple Silicon) → post-process text → type into the focused app via CGEvents.
-No daemons, sockets, temp files, or network dependency after model download.
+on Apple Silicon) → post-process text → pre-insert text handling (spacing and
+case from what precedes the cursor) → type into the focused app via CGEvents.
+Or latch the recording hands-free: it is cut at natural pauses and each piece
+is transcribed and typed while the user keeps talking.
+No daemons, temp files, or network dependency after model download (the only
+socket is the optional, local Emacs-server bridge).
 
 ## Targets & code map
 
@@ -38,11 +50,8 @@ Sources/
     AudioRecorder.swift       PRODUCTION capture: AVAudioEngine input tap → 16kHz mono
                               Float32 in RAM; peak-level callback; config-change
                               (mic unplugged) interruption callback
-    HALAudioRecorder.swift    UNUSED alternative (raw CoreAudio IOProc) — kept from the
-                              mic-pill investigation; see PLAN.md
-    SCKAudioRecorder.swift    UNUSED alternative (ScreenCaptureKit mic capture) — kept;
-                              avoids mic pill but adds screen-recording pill + 75-160ms
-                              start latency; see PLAN.md
+                              takeAvailable() drains new samples while recording
+                              (hands-free pump)
     AudioFileLoader.swift     any audio file → 16kHz mono Float32 (used by CLI/tests)
     AudioResampler.swift      shared mono resample helper
     ModelManager.swift        model catalog: entries carry an EngineKind (5 whisper ggml
@@ -69,10 +78,36 @@ Sources/
                               resuming a dictation, unless the text before the cursor
                               already ends in whitespace (avoids doubling up). Pure
                               Foundation — unit-tested
-    DictationMemory.swift     Smart Spacing's state: remembers the last character Susurro
-                              itself typed and which app (pid) it typed into. No
-                              Accessibility dependency — see SMART_SPACING_PLAN.md for why
-                              an earlier AX-read design was abandoned
+    DictationMemory.swift     remembers what Susurro itself last typed and into which
+                              app (pid), plus where it ended in a cursorless value;
+                              the fallback context when the field can't be read
+                              (history/SMART_SPACING_PLAN.md has the v1 rationale)
+    TextHandling.swift        pre-insert stage: ContextSource, InsertContext,
+                              TextTransform + TextHandlingStage.standard
+                              (ContinuationCase → SentenceCase → LeadingSpace);
+                              every transform is a pure fn of (text, context)
+    ContextProviders.swift    FieldSnapshot (raw AX facts) + ordered pure
+                              ContextProviders keyed on the field's *shape*:
+                              SelectionRange, EmptyValue, TextMarker, AnchoredValue,
+                              AppBridge, Memory; InsertContext.resolve = first answer
+                              wins; secure input → nothing read
+    EmacsServerProtocol.swift emacsclient line protocol (encode/decode) for the Emacs
+                              app bridge
+    HandsFreeMachine.swift    hands-free state machine (idle/holding/latchedHeld/
+                              latched/…): key events + ticks in, effects out
+                              (startRecording, latched, stopAndInsert, cancel,
+                              warnAutoStop); idle 60 s / 2 h safety auto-stop;
+                              app switch stops. Pure value type, no clock/AppKit
+    PauseSegmenter.swift      incremental pause cutter over 16 kHz samples: adaptive
+                              noise floor, minPause 1.0 s, minSpeech 0.1 s, 25 s cap
+                              (cut at quietest frame); contiguous cuts, no audio lost
+    HandsFreeJoin.swift       joins across a pause: holdMark, jointClip (A's last
+                              speech + real pause + B's first speech), decide
+                              (sentenceBreak / continues / unmatched), joined,
+                              shown-mark retraction (canRetract, joinedAfterShown),
+                              long-pause lead-in trim; HeldMarkJoiner = per-session
+                              held/shown mark state
+    ParakeetNumberRules.swift Parakeet-only number formatting fixes
     TranscriptCleaner.swift   optional AI cleanup via FoundationModels (macOS 26 +
                               Apple Intelligence); guided generation (@Generable) so the
                               model can't emit preamble; <6-word skip; sanity-check
@@ -84,13 +119,24 @@ Sources/
                               model menu (sectioned by engine via
                               ModelManager.menuSections(); size + note in every
                               state), engine load/switch (loadEngine, generation
-                              counter discards stale loads), PTT wiring, dictation
-                              pipeline assembly, notifications, About (incl.
-                              Parakeet CC-BY-4.0 attribution)
+                              counter discards stale loads), PTT wiring, hands-free
+                              wiring (hf* pump/dispatch/end), transcribeAndInsert
+                              (the one pipeline both triggers share), notifications,
+                              About (incl. Parakeet CC-BY-4.0 attribution)
     HotkeyMonitor.swift       CGEventTap; PTTKey = modifier (flagsChanged) or regular
-                              key (keyDown/up, swallowed); auto re-enables disabled taps
+                              key (keyDown/up, swallowed); latch key + Esc (Esc only
+                              swallowed while latched); auto re-enables disabled taps
     TextInjector.swift        CGEvent unicode typing, 18-UTF16-unit chunks, Return for
-                              newlines
+                              newlines; deleteBackward (guarded shown-mark retraction)
+    FocusedFieldReader.swift  Accessibility read of the focused element into a
+                              FieldSnapshot, off-main, capped at 250 ms (nil on
+                              timeout); secure fields never read; enables AX on
+                              Electron apps; consults AppBridges
+    AppBridges.swift          per-bundle-ID last-resort bridges; Emacs: one request
+                              on the running Emacs server's socket (~2-35 ms), never
+                              the minibuffer
+    TextHandlingLog.swift     per-app coverage log (source/provider/AX detail —
+                              lengths only, never field text), rotated
     OverlayPanel.swift        recording pill: non-activating NSPanel (never steals
                               focus), waveform bars + timer, bottom-right
     ToastPanel.swift          transient acknowledgment toasts, top-right under menu bar
@@ -103,15 +149,17 @@ Sources/
                               or --engine whisper|parakeet [--model <path>] <wav...>;
                               --post prints raw<TAB>post-processed (fixture corpus
                               regression + engine testing; never downloads)
-  parakeet-spike/           BEA-632 feasibility harness (load + double-transcribe);
-                              dev-only, keep-or-remove decided at BEA-639
 scripts/ab_engines.py       whisper vs Parakeet WER/latency A/B over
                             Fixtures/ab/references.tsv (raw engine output)
+scripts/record_voice_clips.py  records Fixtures/voice/*.wav from references.tsv
+                            (the wavs are Matthew's voice and stay untracked)
 Tests/SusurroTests/         golden tests (pinned to the Python predecessor's output),
                             filter tests, rules-config tests, ModelManager catalog/
                             download tests, ParakeetEngine + Parakeet post-processing
                             goldens (live download test gated by
-                            SUSURRO_LIVE_DOWNLOAD=1)
+                            SUSURRO_LIVE_DOWNLOAD=1), DictationMemory/SpacingRule,
+                            TextHandling (providers + transforms),
+                            HandsFreeMachine, PauseSegmenter, HandsFreeJoin
 Fixtures/                   voice test clips (corpus; add a clip whenever a real-world
                             mishear is worth pinning); Fixtures/ab/ = engine A/B
                             clips + references.tsv (currently `say` stand-ins)
@@ -119,38 +167,106 @@ Support/                    Info.plist, entitlements, AppIcon.icns
 vendor/whisper.cpp          submodule, pinned v1.9.1
 ```
 
-## One dictation, end to end
+## Two triggers, one pipeline
+
+Both triggers end in `AppDelegate.transcribeAndInsert(samples, releasePID:,
+releaseBundleID:, expectedPID:, hfChunk:)`. Push-to-talk calls it once per
+dictation; hands-free calls it once per pause-cut chunk, chained so chunks are
+transcribed and typed strictly in order.
+
+### Push-to-talk
 
 ```
 key down (CGEventTap callback, main runloop)
-  → AppDelegate.pttPressed [MainActor]
+  → HandsFreeMachine .startRecording → AppDelegate.pttPressed [MainActor]
+      engine not ready → toast says why (loading / downloading / failed)
       AudioRecorder.start()          AVAudioEngine tap begins accumulating samples
       OverlayController.show()       non-activating panel; focus untouched
-      levels → overlay waveform      audio thread → DispatchQueue.main hop
-key up
-  → AppDelegate.pttReleased [MainActor]
-      samples = recorder.stop()
-      overlay.hide()
-      Task.detached:                 off the main thread
-        engine.transcribe()          any TranscriptionEngine; warm: whisper small.en
-                                     0.2–0.7s (Metal), Parakeet ~0.07–0.12s (ANE/Core ML)
-        TranscriptFilter             drop [BLANK_AUDIO]-style hallucinations (whisper)
-        PostProcessor.process()      rules.json: punctuation words, substitutions, regex
-        [TranscriptCleaner.clean()]  only if AI Cleanup toggled on; ~1s+; falls back
-        → MainActor:
-            [DictationMemory]        only if Smart Spacing is on and no secure field is
-                                     focused: SpacingRule checks the tail Susurro itself
-                                     last typed into this same frontmost app (pid match),
-                                     decides whether to prepend a space
-            TextInjector.type(text)  CGEvent posting into focused app
-            DictationMemory.record   remembers this text's tail + frontmost pid for the
-                                     next dictation (or clears it if nothing was typed)
-            [clipboard = text]       only if the "Copy Transcript to Clipboard"
-                                     toggle is on (default OFF — user clipboard is
-                                     sacred), OR IsSecureEventInputEnabled() is true
-                                     (password fields drop synthetic keystrokes; the
-                                     copy + a toast keep the words from being lost)
+key up (not latched)
+  → .stopAndInsert → pttReleased: samples = recorder.stop(); overlay.hide()
+  → transcribeAndInsert(samples, releasePID: frontmost, expectedPID: nil)
 ```
+
+### Hands-free (latched)
+
+```
+hold PTT, tap latch key   → HandsFreeMachine .latched → hfBegin
+                            remembers frontmost pid/bundle, fresh PauseSegmenter,
+                            HeldMarkJoiner; 100 ms Timer → hfPump; observes app
+                            activation (switch → .appSwitched → stop)
+hfPump (every 100 ms)       recorder.takeAvailable() → hfFeed → segmenter.append
+                            → cuts → hfDispatch; speech → .heardSpeech; .tick drives
+                            the idle (60 s) / 2 h auto-stop and its warnings
+hfDispatch(cut)             slice the chunk (long lead-in silence trimmed), skip
+                            if no speech, append to hfInsertChain:
+                            transcribeAndInsert(chunk, expectedPID: hfPID, hfChunk:)
+tap PTT / auto-stop         hfEnd(insert: true): flush last segment, then type the
+                            final held mark if the same app is still frontmost
+Esc                         hfEnd(insert: false): generation bump drops queued
+                            chunks and the held mark
+```
+
+### transcribeAndInsert
+
+```
+[MainActor] if Smart Spacing on and no secure input:
+    FocusedFieldReader.read(pid) starts concurrently (Task.detached, ≤250 ms)
+Task.detached:
+    engine.transcribe()          warm: whisper small.en 0.2–0.7 s (Metal),
+                                 Parakeet ~0.07–0.12 s (ANE/Core ML)
+    TranscriptFilter             drop [BLANK_AUDIO]-style hallucinations (whisper)
+    PostProcessor.process()      rules.json; sentence case deferred to the stage
+    [TranscriptCleaner.clean()]  only if AI Cleanup is on
+    hands-free chunk only:       HeldMarkJoiner.accept → .fresh (first chunk) or
+                                 .needsJoin: transcribe HandsFreeJoin.jointClip of
+                                 previous+this chunk, read only the punctuation at
+                                 the join → decide → joined text
+→ MainActor:
+    expectedPID set and another app frontmost → clipboard + toast, never typed
+    InsertContext.resolve(snapshot (same app only), DictationMemory, …)
+        → first ContextProvider that answers; unknown = empty field
+    TextHandlingStage.standard   ContinuationCase, SentenceCase, LeadingSpace
+    hands-free joins:            held mode — type the join only if the cursor is
+                                 still right after the previous words; shown mode
+                                 (readable field) — the previous mark was typed at
+                                 the pause, retract it with one guarded Backspace
+                                 if the joint transcript says the sentence continues
+                                 (canRetract), else leave it; this chunk's own mark
+                                 is shown now if the field is readable, else held
+    TextHandlingLog.record       source/provider/AX detail, never field text
+    TextInjector.type(text)      CGEvent posting into the focused app
+    DictationMemory.recordTyped  tail + pid (+ position in a cursorless value);
+                                 cleared if nothing was typed
+    [clipboard = text]           "Copy Transcript to Clipboard" on (default OFF), or
+                                 secure input active (synthetic keys are dropped;
+                                 copy + toast keep the words)
+```
+
+## Text handling (BEA-648)
+
+- Master toggle: Smart Spacing. Off → no AX read, sentence case only.
+- The app target only *collects* facts (`FocusedFieldReader` → `FieldSnapshot`,
+  `AppBridges`); all interpretation is pure code in SusurroCore
+  (`ContextProviders`, `TextHandling`) and is unit-tested.
+- Providers key on the field's shape, not on bundle IDs; adding an app class
+  means adding a provider. App bridges are the only per-app code and run
+  inside the same 250 ms cap.
+- The read runs concurrently with transcription and only counts if the same
+  app is still frontmost at insert time.
+- Field text is never logged. See `TEXT_HANDLING_FINDINGS.md`.
+
+## Hands-free (BEA-651, BEA-657)
+
+- `HandsFreeMachine` owns the key semantics (latch, stop, Esc, auto-stop, app
+  switch); AppDelegate only applies its effects. Pure, unit-tested with
+  synthetic timestamps.
+- `PauseSegmenter` decides where chunks end; every sample belongs to exactly
+  one segment.
+- Per-chunk transcription makes every chunk end with a mark. `HandsFreeJoin`
+  decides each join's punctuation from a joint clip across the real pause;
+  the typed words are always the per-chunk words. Readable fields show the
+  mark at the pause and retract it if needed (shown-mark mode); unreadable
+  fields hold it until the next join or stop. See `HANDSFREE_JOINS.md`.
 
 ## Engines & model catalog
 
@@ -180,13 +296,18 @@ path (directory = Parakeet, file = whisper; the CLI relies on this).
 - Parakeet does its own inverse text normalisation (numbers, currency, times,
   casing, punctuation) but keeps spoken triggers ("comma", "quote") literal, so
   `rules.json` still applies. Custom vocabulary is not supported on Parakeet
-  (see `VOCABULARY_PROMPT_PLAN.md`, whisper-only).
+  (see `history/VOCABULARY_PROMPT_PLAN.md`, whisper-only).
 
 ## Concurrency model
 
 - All UI/menu/AppKit state: `@MainActor` (AppDelegate, panels, HotkeyMonitor).
-- Audio tap & CoreAudio callbacks arrive on audio threads; recorders are
-  `@unchecked Sendable` with `NSLock`-guarded sample buffers.
+- Audio tap callbacks arrive on audio threads; `AudioRecorder` is
+  `@unchecked Sendable` with an `NSLock`-guarded sample buffer.
+- Hands-free state (`HandsFreeMachine`, `PauseSegmenter`, `HeldMarkJoiner`,
+  buffers) lives on the main actor; chunk work is serialized through the
+  `hfInsertChain` task chain with a generation counter for cancellation.
+- `FocusedFieldReader` runs detached and is time-capped; its result is only
+  consumed after transcription.
 - Transcription runs in `Task.detached` on an `any TranscriptionEngine`; the
   protocol requires `Sendable` and serialized `transcribe`, so each engine
   holds its own lock (`WhisperEngine`: whisper_context is not reentrant;
@@ -206,7 +327,9 @@ path (directory = Parakeet, file = whisper; the CLI relies on this).
 | PTT key | UserDefaults `pttKeyID` (default rightOption) |
 | AI cleanup | UserDefaults `llmCleanupEnabled` (default false) |
 | Clipboard copy | UserDefaults `copyToClipboard` (default false; secure-input auto-copy is unconditional) |
-| Smart Spacing | UserDefaults `smartSpacingEnabled` (default false) |
+| Smart Spacing (text-handling master toggle) | UserDefaults `smartSpacingEnabled` (default false) |
+| Latch key | UserDefaults `latchKeyID` (default rightCommand; `LatchKeyResolver` never lets it equal the PTT key) |
+| Text-handling coverage log | `TextHandlingLog` file (rotated; no field text) |
 | Login item | SMAppService.mainApp |
 
 Note: `activeModelID` has a value even when no model file exists — always pair
@@ -228,12 +351,12 @@ with `activeModelPath()` (nil = genuinely no model) when messaging users.
   signature, API (AVAudioEngine vs raw HAL), launch context, activation policy,
   and entitlements were all tested — only the capture *route* matters, and the
   ScreenCaptureKit route trades it for a worse indicator + Screen Recording
-  permission + start latency. Full experiment log in PLAN.md.
+  permission + start latency. Full experiment log in history/PLAN.md.
 - **whisper small.en beat Apple's SpeechTranscriber** on technical vocabulary
   and verbal-punctuation handling in the original spike (see ptt repo
-  spike/ and PLAN.md). Engines now sit behind `TranscriptionEngine`; Parakeet
+  spike/ and history/PLAN.md). Engines now sit behind `TranscriptionEngine`; Parakeet
   TDT v2 was added as an option (2.4% vs 11.4% WER on the A/B corpus, ~3.5×
-  faster), but `small.en` stays the default. See PARAKEET_PLAN.md.
+  faster), but `small.en` stays the default. See history/PARAKEET_PLAN.md.
 - **FluidAudio's `AsrModels.load(from:)` silently re-downloads ~450 MB** into the
   directory's parent if files are missing. `ParakeetEngine` checks
   `modelsExist(at:version:)` first and throws `modelFilesMissing` instead.
@@ -248,7 +371,8 @@ with `activeModelPath()` (nil = genuinely no model) when messaging users.
 - **Whisper hallucinates on silence** ("[BLANK_AUDIO]") — TranscriptFilter
   strips square-bracket tokens; parentheses are preserved deliberately.
 - **Reading a focused field's content via Accessibility does not generalize
-  across apps.** `kAXSelectedTextRangeAttribute` (cursor position) is only
+  across apps with one attribute.** (0.2.0 answers this with shape-keyed
+  providers + app bridges + self-tracking fallback, above.) `kAXSelectedTextRangeAttribute` (cursor position) is only
   reliably implemented by native Cocoa text views. Electron apps and
   Chromium/WebKit web content expose cursor position via a different,
   non-standard mechanism (`AXTextMarkerRange`); Terminal's custom-drawn text
@@ -256,9 +380,10 @@ with `activeModelPath()` (nil = genuinely no model) when messaging users.
   AX-read-based Smart Spacing design was built, tested, and abandoned for
   this reason (empirically: it worked in TextEdit, silently did nothing in
   Claude desktop/Terminal/browser fields) in favor of `DictationMemory`
-  self-tracking what Susurro itself typed. See SMART_SPACING_PLAN.md.
+  self-tracking what Susurro itself typed. See history/SMART_SPACING_PLAN.md
+  and TEXT_HANDLING_FINDINGS.md for the 0.2.0 redesign.
 - ~600 MB resident with small.en warm; scales with model choice. Parakeet's
-  in-process RSS reads far lower (~93 MB in the spike) because Core ML/ANE
+  in-process RSS reads far lower (~93 MB in the BEA-632 spike) because Core ML/ANE
   weights live outside resident pages; its real in-app footprint has not been
   measured yet.
 

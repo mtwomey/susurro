@@ -35,7 +35,7 @@ let package = Package(
     name: "Susurro",
     platforms: [.macOS(.v15)],
     dependencies: [
-        // Parakeet TDT (Core ML) speech-to-text engine — see docs/PARAKEET_PLAN.md
+        // Parakeet TDT (Core ML) speech-to-text engine — see docs/history/PARAKEET_PLAN.md
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.9.1"),
     ],
     targets: [
@@ -79,14 +79,6 @@ let package = Package(
             name: "susurro-cli",
             dependencies: ["SusurroCore"],
             path: "Sources/susurro-cli",
-            swiftSettings: whisperSwiftSettings,
-            linkerSettings: whisperLinkerSettings
-        ),
-        // Parakeet feasibility spike (BEA-632): download/load v2, transcribe files
-        .executableTarget(
-            name: "parakeet-spike",
-            dependencies: ["SusurroCore"],
-            path: "Sources/parakeet-spike",
             swiftSettings: whisperSwiftSettings,
             linkerSettings: whisperLinkerSettings
         ),

@@ -117,7 +117,7 @@ and transcribed roughly 3.5× faster. It formats numbers, times and currency
 itself, and spoken punctuation ("comma", "new line", …) works the same way as
 with Whisper. The first load after downloading takes ~20 s while macOS
 compiles the model; later loads are quick. Details are in
-[`docs/PARAKEET_PLAN.md`](docs/PARAKEET_PLAN.md).
+[`docs/history/PARAKEET_PLAN.md`](docs/history/PARAKEET_PLAN.md).
 
 ## Notes
 
@@ -146,13 +146,13 @@ All developer docs live in [`docs/`](docs):
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — as-built structure, code map, dataflow, hard-won constraints
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — machine setup (incl. signing identity), make targets,
   testing, debugging, release process
-- [`docs/PLAN.md`](docs/PLAN.md) — historical design doc: decisions, spike data, investigations,
+- [`docs/history/PLAN.md`](docs/history/PLAN.md) — historical design doc: decisions, spike data, investigations,
   rejected alternatives, v2 parking lot
-- [`docs/SMART_SPACING_PLAN.md`](docs/SMART_SPACING_PLAN.md) — Smart Spacing design doc: why an
+- [`docs/history/SMART_SPACING_PLAN.md`](docs/history/SMART_SPACING_PLAN.md) — Smart Spacing design doc: why an
   Accessibility-based approach was rejected in favor of self-tracking
-- [`docs/VOCABULARY_PROMPT_PLAN.md`](docs/VOCABULARY_PROMPT_PLAN.md) — proposed custom-vocabulary
+- [`docs/history/VOCABULARY_PROMPT_PLAN.md`](docs/history/VOCABULARY_PROMPT_PLAN.md) — proposed custom-vocabulary
   feature (whisper initial-prompt biasing), with spike results
-- [`docs/PARAKEET_PLAN.md`](docs/PARAKEET_PLAN.md) — NVIDIA Parakeet TDT v2 engine: feasibility spike,
+- [`docs/history/PARAKEET_PLAN.md`](docs/history/PARAKEET_PLAN.md) — NVIDIA Parakeet TDT v2 engine: feasibility spike,
   catalog/download design, post-processing changes, whisper vs Parakeet A/B results
 - [`docs/CHECKLIST.md`](docs/CHECKLIST.md) — manual release acceptance checklist
 - [`docs/releasing.md`](docs/releasing.md) — step-by-step release process including Homebrew tap update

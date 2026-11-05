@@ -17,7 +17,7 @@ public enum ParakeetEngineError: Error, CustomStringConvertible {
 /// Honours the `TranscriptionEngine` contract:
 /// - **Warm load:** `init(modelDirectory:)` loads the Core ML models from a
 ///   Susurro-owned directory (`ModelManager` downloads it; see
-///   docs/PARAKEET_PLAN.md) and initializes the manager once. Nothing is
+///   docs/history/PARAKEET_PLAN.md) and initializes the manager once. Nothing is
 ///   downloaded and nothing is written to FluidAudio's own cache.
 /// - **Serialized:** `AsrManager` is a non-`Sendable` class with mutable
 ///   decoder state, so every call into it goes through `lock`, one at a time.
@@ -54,24 +54,12 @@ public final class ParakeetEngine: TranscriptionEngine, @unchecked Sendable {
         }
     }
 
-    /// Dev-harness path (parakeet-spike): download into FluidAudio's cache if
-    /// missing, then load. The app never uses this.
-    public static func downloadAndLoad() throws -> ParakeetEngine {
-        let directory = fluidAudioCacheDirectory
-        if !AsrModels.modelsExist(at: directory, version: .v2) {
-            _ = try runBlocking { _ = try await AsrModels.download(version: .v2) }
-        }
-        return try ParakeetEngine(modelDirectory: directory)
-    }
-
-    public static var fluidAudioCacheDirectory: URL { AsrModels.defaultCacheDirectory(for: .v2) }
-
     /// Trailing silence appended to every utterance (BEA-643). Push-to-talk
     /// cuts the audio at the last word, which Parakeet never saw in training:
     /// it drops the final ?/. and formats worse ("three thirty PM" for
     /// "3:30 p.m."). 2 s of silence fixed both on Matthew's own recordings
     /// (reference errors 31 -> 10, no clip worse, 14/14 final marks); see
-    /// docs/PARAKEET_PLAN.md.
+    /// docs/history/PARAKEET_PLAN.md.
     static let trailingSilenceSamples = 32_000
 
     /// FluidAudio decodes <= 240,000 samples (15 s) in one window and longer
