@@ -144,8 +144,13 @@ rules.json switch kept for compatibility). AI Cleanup: unchanged; optionally pas
 later. Smart Spacing menu toggle: becomes the stage's master toggle. Tests: pure transforms over
 `InsertContext` fixtures for every symptom above.
 
-## 4. Open questions for the board
-1. Context source policy: AX read with self-tracked fallback (B), or self-tracked with focus/keystroke
-   invalidation only (A)?
-2. Case priority and the unknown-context default (empty field vs continuation).
-3. Branch/release: separate feature branch and release from Parakeet, or fold into parakeet-v2?
+## 4. Board decisions (BEA-647 interview, 2026-11-04)
+1. Context source: **AX read of the focused field, with self-tracked memory as the fallback** — option B
+   in section 3.2 above. (The question form had the same option listed first, as its "A".)
+2. Unknown context: **assume an empty field**: no leading space, capitalise the first letter.
+3. Priority: **all three cases together** (stray leading space, double space, continuation capital).
+4. Branch/release, in the board's words: "It should be its own feature branch and we can merge it after
+   the parakeet merge which or we can base it off the parakeet branch. However, we're going to ship these
+   together as a new release. In fact, there'll be a third feature we're going to add before we actually
+   ship." So the work happens on its own branch, based on `feature/parakeet-v2`, and ships in the same
+   release as Parakeet and a third, still-unnamed feature. Text handling is not released on its own.
