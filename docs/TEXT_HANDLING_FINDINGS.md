@@ -112,7 +112,7 @@ Accessibility trust for an AX observer; it still guesses after mouse clicks insi
 **B. AX read of the focused field, self-tracked fallback (recommended).** On key-up of push-to-talk,
 read `kAXFocusedUIElement` → `kAXValueAttribute` + `kAXSelectedTextRangeAttribute`, or for Chromium/WebKit
 `AXSelectedTextMarkerRange` + `AXStringForTextMarkerRange`. Fall back to A when unreadable.
-What changed since `SMART_SPACING_PLAN.md` abandoned this: (1) Matthew now allows reading the whole field,
+What changed since `history/SMART_SPACING_PLAN.md` abandoned this: (1) Matthew now allows reading the whole field,
 so `kAXValueAttribute` (whole value) is usable instead of the narrow string-for-range call; an empty
 value alone solves 2.1 even where the cursor position is unreadable; (2) the earlier design had no
 fallback and treated "unreadable" as "do nothing", which is why it "silently did nothing" — with a

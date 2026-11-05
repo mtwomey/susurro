@@ -62,7 +62,7 @@ public typealias WhisperModel = CatalogModel
 /// unused ones. Whisper models are single ggml files; Parakeet is a Core ML
 /// model directory fetched file-by-file by Susurro's own FileDownloader (not
 /// FluidAudio's downloader, which reports no progress and writes to its own
-/// Application Support folder) — see docs/PARAKEET_PLAN.md (BEA-634).
+/// Application Support folder) — see docs/history/PARAKEET_PLAN.md (BEA-634).
 /// Verification is by exact byte count + successful engine load.
 @MainActor
 public final class ModelManager {

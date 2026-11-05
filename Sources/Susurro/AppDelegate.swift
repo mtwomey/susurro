@@ -16,10 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotkeyItem: NSMenuItem!
     private var latchItem: NSMenuItem!
 
-    // Production capture: AVAudioEngine. Alternatives evaluated and documented in
-    // docs/PLAN.md ("mic-mode pill"): HALAudioRecorder (raw CoreAudio — still pills),
-    // SCKAudioRecorder (ScreenCaptureKit — no mic pill, but screen-recording pill,
-    // Screen Recording permission, and 75–160 ms capture-start dead air).
+    // Production capture: AVAudioEngine. Alternatives (raw CoreAudio HAL, ScreenCaptureKit)
+    // were evaluated and rejected — see docs/history/PLAN.md ("mic-mode pill"); their
+    // recorders were deleted in R0 and live on in git history.
     private let recorder = AudioRecorder()
     private let overlay = OverlayController()
     private let postProcessor = PostProcessor()
@@ -43,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         get { UserDefaults.standard.bool(forKey: "smartSpacingEnabled") } // default off
         set { UserDefaults.standard.set(newValue, forKey: "smartSpacingEnabled") }
     }
-    // Self-tracking, not an Accessibility read — see docs/SMART_SPACING_PLAN.md.
+    // Self-tracking, not an Accessibility read — see docs/history/SMART_SPACING_PLAN.md.
     private var dictationMemory = DictationMemory()
     private let hotkey = HotkeyMonitor()
 

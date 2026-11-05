@@ -60,7 +60,7 @@ automated: real apps, real permissions, real hardware events.
 ## Smart Spacing (opt-in, default off)
 
 Self-tracked (Susurro remembers what *it* typed and where — no field read).
-See SMART_SPACING_PLAN.md for why an earlier Accessibility-based design was
+See history/SMART_SPACING_PLAN.md for why an earlier Accessibility-based design was
 abandoned (it silently did nothing in Electron apps, browsers, and Terminal).
 
 - [ ] Toggle on: dictate anything, then dictate again into the same field
