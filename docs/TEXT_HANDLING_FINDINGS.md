@@ -207,5 +207,5 @@ to 8 characters of the user's own edits and no newline; otherwise the memory fal
 | VS Code | | | |
 | Terminal | | | |
 | Zen (Gecko) | accessibility, `range` path, role AXTextField (log: valueLen/caret consistent) | all OK on retest (72de228) | First run had a double space at step 3; the retest passed. The log never showed a caret past the value end, so the caret-past-end rule is unproven as the cause; it stays as a harmless guard |
-| Warp | was self-tracked (probe: AXTextArea, whole buffer, no caret); now `bufferTail` when it anchors | first run: 1, 4 OK; 2 capital "And"; 3 double space | Buffer-end heuristic added; Warp retest pending |
+| Warp | `bufferTail` (AXTextArea, whole buffer, no caret); empty prompt → `none` | all OK on retest (5b9e5f6): log 03:52 shows none → bufferTail → bufferTail | First run (memory only): capital "And" after a deleted full stop, double space after a typed space; fixed by the buffer-end rule |
 | Emacs | AX unreadable (focused role AXWindow) → memory / none | not scripted | Seen in the log; memory fallback only |
