@@ -682,6 +682,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let engine else { return }
         let postProcessor = postProcessor
         let cleaner = cleanupEnabled ? self.cleaner : nil
+        // Text handling (BEA-648): read the focused field through
+        // Accessibility while the engine transcribes; capped at 250 ms.
+        // Smart Spacing is the stage's master toggle — off means no read and
+        // the old context-free behaviour (sentence case only).
+        let releaseApp = NSWorkspace.shared.frontmostApplication
+        let releasePID = releaseApp?.processIdentifier
+        let releaseBundleID = releaseApp?.bundleIdentifier
+        var fieldTask: Task<FieldRead?, Never>?
+        if smartSpacingEnabled, !IsSecureEventInputEnabled(), let pid = releasePID {
+            fieldTask = Task.detached(priority: .userInitiated) { await FocusedFieldReader.read(pid: pid) }
+        }
+        let pendingFieldRead = fieldTask
         Task.detached(priority: .userInitiated) {
             let transcript: String
             do {
@@ -694,26 +706,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 transcript = ""
             }
             let raw = TranscriptFilter.stripHallucinations(transcript, engine: engine.kind)
-            var text = raw.isEmpty ? "" : postProcessor.process(raw)
-            if let cleaner, !text.isEmpty {
-                text = await cleaner.clean(text) ?? text
+            // Sentence case is deferred to the pre-insert stage, which can see
+            // what precedes the cursor.
+            var cleaned = raw.isEmpty ? "" : postProcessor.process(raw, applySentenceCase: false)
+            if let cleaner, !cleaned.isEmpty {
+                cleaned = await cleaner.clean(cleaned) ?? cleaned
             }
-            slog("ptt: transcript: \(raw) -> \(text)")
+            slog("ptt: transcript: \(raw) -> \(cleaned)")
+            let fieldRead = await pendingFieldRead?.value
+            let autoCapitalize = postProcessor.autoCapitalizeEnabled
+            let processed = cleaned
             await MainActor.run { [weak self] in
-                guard let self, !text.isEmpty else { return }
+                guard let self, !processed.isEmpty else { return }
                 // Secure input (password fields) silently blocks synthetic typing —
                 // in that case copy regardless of the setting so the words aren't lost.
                 let secureInputActive = IsSecureEventInputEnabled()
                 let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-                // Smart Spacing: self-tracked, not an Accessibility read (see
-                // docs/SMART_SPACING_PLAN.md) — only fires if Susurro itself typed
-                // into this same frontmost app last time.
-                if !secureInputActive, self.smartSpacingEnabled, let frontmostPID,
-                   SpacingRule.needsLeadingSpace(
-                       beforeCursor: self.dictationMemory.tailIfStillFocused(pid: frontmostPID)
-                   ) {
-                    text = " " + text
+                // Pre-insert text-handling stage (docs/TEXT_HANDLING_FINDINGS.md):
+                // Accessibility read of the focused field, self-tracked memory as
+                // the fallback, unknown = empty field. The AX read only counts if
+                // the same app is still frontmost. Field text is never logged.
+                let context: InsertContext
+                if self.smartSpacingEnabled {
+                    let sameApp = frontmostPID != nil && frontmostPID == releasePID
+                    context = InsertContext.resolve(
+                        fieldRead: sameApp ? fieldRead : nil,
+                        memoryTail: frontmostPID.flatMap { self.dictationMemory.tailIfStillFocused(pid: $0) },
+                        pid: frontmostPID, bundleID: releaseBundleID, engine: engine.kind,
+                        secureInput: secureInputActive)
+                } else {
+                    context = InsertContext(before: nil, source: .none, pid: frontmostPID,
+                                            engine: engine.kind, secureInput: secureInputActive)
                 }
+                let stage = TextHandlingStage.standard(smartSpacing: self.smartSpacingEnabled,
+                                                       autoCapitalize: autoCapitalize)
+                var text = stage.apply(processed, context)
+                slog("ptt: context source=\(context.source.rawValue) app=\(releaseBundleID ?? "?") known=\(context.before != nil)")
+                guard !text.isEmpty else { return }
                 let typed = TextInjector.type(text)
                 if !secureInputActive, typed, let frontmostPID {
                     self.dictationMemory.recordTyped(text, intoPID: frontmostPID)
