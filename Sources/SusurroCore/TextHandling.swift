@@ -27,14 +27,32 @@ public struct FieldRead: Sendable, Equatable {
     public var after: String?
     /// The focused element is a secure (password) field; nothing was read.
     public var secure: Bool
+    /// Which read path produced this, plus lengths/positions only — never
+    /// field text. For the per-app coverage log.
+    public var detail: String
 
-    public init(before: String?, after: String? = nil, secure: Bool = false) {
+    public init(before: String?, after: String? = nil, secure: Bool = false, detail: String = "") {
         self.before = before
         self.after = after
         self.secure = secure
+        self.detail = detail
     }
 
-    public static let secureField = FieldRead(before: nil, after: nil, secure: true)
+    /// Builds a read from a whole field value and its selection. Some apps
+    /// (Gecko contenteditable inputs, e.g. Firefox/Zen) drop a trailing typed
+    /// space from the reported value but keep the caret after it, so a caret
+    /// past the end of the value means whitespace the value doesn't show.
+    public static func fromValue(_ value: String, location: Int, length: Int) -> FieldRead {
+        let ns = value as NSString
+        let start = max(0, min(location, ns.length))
+        let end = max(start, min(location + max(length, 0), ns.length))
+        var before = ns.substring(to: start)
+        if location > ns.length { before += " " }
+        return FieldRead(before: before, after: ns.substring(from: end),
+                         detail: "range valueLen=\(ns.length) caret=\(location)")
+    }
+
+    public static let secureField = FieldRead(before: nil, after: nil, secure: true, detail: "secure")
 }
 
 public struct InsertContext: Sendable, Equatable {

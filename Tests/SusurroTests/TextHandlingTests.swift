@@ -117,3 +117,22 @@ import Testing
         #expect(p.autoCapitalizeEnabled)
     }
 }
+
+@Suite struct FieldReadTests {
+    @Test func caretPastValueEndMeansCollapsedTrailingSpace() {
+        // Gecko reports "we left." but the caret sits after the typed space.
+        let read = FieldRead.fromValue("we left.", location: 9, length: 0)
+        #expect(read.before == "we left. ")
+        let stage = TextHandlingStage.standard(smartSpacing: true, autoCapitalize: true)
+        let ctx = InsertContext.resolve(fieldRead: read, memoryTail: nil, pid: 1,
+                                        bundleID: nil, engine: nil, secureInput: false)
+        #expect(stage.apply("it was late.", ctx) == "It was late.")
+    }
+
+    @Test func caretInsideValueSplitsBeforeAndAfter() {
+        let read = FieldRead.fromValue("hello world", location: 5, length: 0)
+        #expect(read.before == "hello")
+        #expect(read.after == " world")
+        #expect(!read.detail.contains("hello"))
+    }
+}

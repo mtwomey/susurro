@@ -42,7 +42,9 @@ enum FocusedFieldReader {
         AXUIElementSetMessagingTimeout(app, 0.2)
         enableManualAccessibilityOnce(app: app, pid: pid)
 
-        guard let focused: AXUIElement = copy(app, kAXFocusedUIElementAttribute) else { return nil }
+        guard let focused: AXUIElement = copy(app, kAXFocusedUIElementAttribute) else {
+            return FieldRead(before: nil, after: nil, detail: "noFocusedElement")
+        }
         AXUIElementSetMessagingTimeout(focused, 0.2)
 
         let role: String? = copy(focused, kAXRoleAttribute)
@@ -56,16 +58,15 @@ enum FocusedFieldReader {
 
         // Native text views: whole value + CFRange selection.
         if let value, let range = selectedRange(focused) {
-            let ns = value as NSString
-            let start = max(0, min(range.location, ns.length))
-            let end = max(start, min(range.location + range.length, ns.length))
-            return FieldRead(before: ns.substring(to: start), after: ns.substring(from: end))
+            var read = FieldRead.fromValue(value, location: range.location, length: range.length)
+            read.detail += " role=\(role ?? "?")"
+            return read
         }
 
         // An empty value settles the empty-field case (stray leading space
         // after Enter-to-send) even where the cursor is unreadable.
         if let value, value.isEmpty {
-            return FieldRead(before: "", after: "")
+            return FieldRead(before: "", after: "", detail: "emptyValue role=\(role ?? "?")")
         }
 
         // Chromium / WebKit / Electron: text markers. The marker start may be
@@ -73,9 +74,11 @@ enum FocusedFieldReader {
         // is known the result must be a prefix of it; otherwise fall back.
         if let before = textBeforeSelectionViaMarkers(focused),
            value == nil || value!.hasPrefix(before) {
-            return FieldRead(before: before, after: value.map { String($0.dropFirst(before.count)) })
+            return FieldRead(before: before, after: value.map { String($0.dropFirst(before.count)) },
+                             detail: "markers beforeLen=\(before.count) role=\(role ?? "?")")
         }
-        return FieldRead(before: nil, after: nil)
+        return FieldRead(before: nil, after: nil,
+                         detail: "unreadable role=\(role ?? "?") hasValue=\(value != nil)")
     }
 
     private static func enableManualAccessibilityOnce(app: AXUIElement, pid: pid_t) {

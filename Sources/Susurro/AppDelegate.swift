@@ -741,7 +741,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let stage = TextHandlingStage.standard(smartSpacing: self.smartSpacingEnabled,
                                                        autoCapitalize: autoCapitalize)
                 var text = stage.apply(processed, context)
-                slog("ptt: context source=\(context.source.rawValue) app=\(releaseBundleID ?? "?") known=\(context.before != nil)")
+                let readDetail = fieldRead?.detail ?? (pendingFieldRead == nil ? "notRead" : "timeout")
+                TextHandlingLog.record("source=\(context.source.rawValue) app=\(releaseBundleID ?? "?") known=\(context.before != nil) ax=\(readDetail) sameApp=\(frontmostPID == releasePID)")
                 guard !text.isEmpty else { return }
                 let typed = TextInjector.type(text)
                 if !secureInputActive, typed, let frontmostPID {
