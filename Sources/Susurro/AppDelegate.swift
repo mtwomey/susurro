@@ -789,6 +789,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // previous chunk's mark is held, decide it from a joint transcript.
             var joinedText: String?
             var heldBody: String?
+            var heldShown = false
+            var heldMark: Character = "."
+            var joinDecision: HandsFreeJoin.Decision = .unmatched
             var processed = cleaned
             if let hfChunk, !cleaned.isEmpty {
                 let step = await MainActor.run { [weak self] () -> (HeldMarkJoiner.Plan, HFChunk?)? in
@@ -811,6 +814,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     slog("handsfree: join decision=\(decision) held=\(held.mark)")
                     joinedText = HandsFreeJoin.joined(mark: held.mark, decision: decision, next: next)
                     heldBody = held.body
+                    heldShown = held.shown
+                    heldMark = held.mark
+                    joinDecision = decision
                     processed = next
                 default:
                     break
@@ -818,6 +824,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             let joinText = joinedText
             let joinAfter = heldBody
+            let prevShown = heldShown, prevMark = heldMark, decision = joinDecision
+            let isHandsFree = hfChunk != nil
             await MainActor.run { [weak self] in
                 guard let self, !processed.isEmpty || joinText != nil else { return }
                 // Secure input (password fields) silently blocks synthetic typing —
@@ -830,7 +838,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
                     // A held mark travels with the copied words, never lost.
-                    let copied = joinText.map { $0.trimmingCharacters(in: .whitespaces) } ?? processed
+                    // (A mark already shown in the old field stays there.)
+                    let copied = prevShown ? processed
+                        : (joinText.map { $0.trimmingCharacters(in: .whitespaces) } ?? processed)
                     pasteboard.setString(copied, forType: .string)
                     self.hfJoiner.discard()
                     self.dictationMemory.clear()
@@ -860,7 +870,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let stage = TextHandlingStage.standard(smartSpacing: self.smartSpacingEnabled,
                                                        autoCapitalize: autoCapitalize)
                 var text = stage.apply(processed, context)
-                if let joinText, let joinAfter {
+                var deleteCount = 0
+                // Shown-mark mode (board follow-up on BEA-657): marks are typed at
+                // the pause and retracted with one guarded Backspace only when the
+                // field is readable and the mark sits right before the cursor.
+                let readableField = [.accessibility, .anchoredValue, .appBridge].contains(context.source)
+                    && context.before != nil && !secureInputActive
+                if prevShown, joinText != nil, let joinAfter {
+                    if readableField, HandsFreeJoin.canRetract(before: context.before, mark: prevMark, previousBody: joinAfter) {
+                        let edit = HandsFreeJoin.joinedAfterShown(decision: decision, next: processed)
+                        deleteCount = edit.deleteBackward
+                        text = edit.text
+                    } else {
+                        // Cursor moved / unreadable: the shown mark stays; the
+                        // piece goes in as a fresh dictation (pre-BEA-657 result).
+                        slog("handsfree: shown mark not in place, join skipped")
+                    }
+                } else if let joinText, let joinAfter {
                     // Type the join in place only if the cursor is still right
                     // after the previous chunk's words. Unknown context (no AX,
                     // no memory) counts as in place: the session's own typing is
@@ -871,8 +897,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 let readDetail = fieldRead?.detail ?? (pendingFieldRead == nil ? "notRead" : "timeout")
                 TextHandlingLog.record("source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)")
+                // Show this piece's own end mark now if the field is readable;
+                // otherwise it stays held (typed at the next join or at stop).
+                var showingMark = false
+                if isHandsFree, readableField, let mark = self.hfJoiner.held?.mark, !text.isEmpty {
+                    text.append(mark)
+                    showingMark = true
+                }
                 guard !text.isEmpty else { return }
+                if deleteCount > 0, let frontmostPID {
+                    TextInjector.deleteBackward(deleteCount)
+                    self.dictationMemory.recordDeletedBackward(deleteCount, inPID: frontmostPID)
+                    slog("handsfree: retracted shown mark")
+                }
                 let typed = TextInjector.type(text)
+                if showingMark && typed { self.hfJoiner.markShown() }
                 if !secureInputActive, typed, let frontmostPID {
                     // Where the insertion ended inside a cursorless value, so the
                     // next anchored lookup can tell repeated phrases apart.

@@ -104,6 +104,29 @@ public enum HandsFreeJoin {
         }
     }
 
+    /// Shown-mark mode (board, BEA-657 follow-up): the mark was typed at the
+    /// pause. Is the cursor still right after it, so the next piece can join
+    /// in place and, if needed, one Backspace removes exactly that mark?
+    /// Requires a readable field: `before` must end with the previous piece's
+    /// last word immediately followed by the mark (no space, nothing else).
+    public static func canRetract(before: String?, mark: Character, previousBody: String) -> Bool {
+        guard let before, before.last == mark else { return false }
+        guard let tail = previousBody.split(whereSeparator: { $0.isWhitespace }).last else { return false }
+        return before.dropLast().lowercased().hasSuffix(tail.lowercased())
+    }
+
+    /// The edit for the next piece after a SHOWN mark: how many characters to
+    /// delete first (0 or 1) and the text to type.
+    public static func joinedAfterShown(decision: Decision, next: String) -> (deleteBackward: Int, text: String) {
+        let body = String(next.drop(while: { $0.isWhitespace }))
+        switch decision {
+        case .sentenceBreak, .unmatched:
+            return (0, " " + body)
+        case .continuation:
+            return (1, joined(mark: ".", decision: .continuation, next: body))
+        }
+    }
+
     /// Fallback guard: is the cursor still right after the previous chunk's
     /// words? Unknown context (nil) counts as in place: only the session's
     /// own typing ran since. A moved cursor or changed field returns false and
@@ -158,6 +181,8 @@ public struct HeldMarkJoiner: Sendable {
         /// The text typed for the chunk (without the mark), for matching.
         public let body: String
         public let pid: Int32?
+        /// True when the mark was typed at the pause (shown-mark mode).
+        public var shown = false
     }
 
     public private(set) var held: Held?
@@ -189,10 +214,15 @@ public struct HeldMarkJoiner: Sendable {
         HandsFreeJoin.joined(mark: previous.mark, decision: decision, next: next)
     }
 
-    /// Session stopped (tap / auto-stop): the held mark to type, if any.
+    /// The current chunk's mark was typed at the pause (shown-mark mode):
+    /// stop has nothing left to type, and the next join may retract it.
+    public mutating func markShown() { held?.shown = true }
+
+    /// Session stopped (tap / auto-stop): the held mark to type, if any
+    /// (nil when it is already shown).
     public mutating func stop() -> Character? {
         defer { held = nil }
-        return held?.mark
+        return held?.shown == true ? nil : held?.mark
     }
 
     /// Esc / discard: drop the held mark.
