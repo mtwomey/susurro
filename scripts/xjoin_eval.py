@@ -29,6 +29,10 @@ CASES = [
 ]
 
 
+# Matthew's recorded pairs (scripts/xjoin_pairs.tsv -> Fixtures/voice/x*.wav, untracked).
+VOICE_EXPECT = {"x01": "continue", "x02": "continue", "x03": "continue", "x04": "break", "x05": "break"}
+
+
 def say(text, path, voice):
     if not os.path.exists(path):
         cmd = ["say", "-o", path, "--data-format=LEI16@16000"]
@@ -70,12 +74,21 @@ def main():
     ap.add_argument("--voice", default="Samantha")
     ap.add_argument("--gap", type=float, default=3)
     ap.add_argument("--clips", nargs=2)
+    ap.add_argument("--voice-pairs", action="store_true", help="use Fixtures/voice/x*.wav (own voice)")
     ap.add_argument("--expect", choices=["continue", "break"])
     a = ap.parse_args()
     os.makedirs(OUT, exist_ok=True)
     jobs = []
     if a.clips:
         jobs.append((a.clips, a.expect or "continue", "clips"))
+    elif a.voice_pairs:
+        vdir = os.path.join(ROOT, "Fixtures", "voice")
+        for name, exp in VOICE_EXPECT.items():
+            pa, pb = os.path.join(vdir, f"{name}a.wav"), os.path.join(vdir, f"{name}b.wav")
+            if os.path.exists(pa) and os.path.exists(pb):
+                jobs.append(([pa, pb], exp, name))
+        if not jobs:
+            sys.exit("no Fixtures/voice/x*.wav pairs; record: scripts/record_voice_clips.py --tsv scripts/xjoin_pairs.tsv")
     else:
         for i, (x, y, exp) in enumerate(CASES):
             pa, pb = os.path.join(OUT, f"c{i:02d}a.wav"), os.path.join(OUT, f"c{i:02d}b.wav")

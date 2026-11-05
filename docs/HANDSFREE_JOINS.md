@@ -99,3 +99,37 @@ Cost: joint transcribe ~0.07 s per join (1.88 s over 28 joins). minPause 1.0
 means each piece is typed 0.3 s later after you stop talking (cut at 1.0 s of
 silence instead of 0.7 s); short gaps (0.8 s) no longer cut at all, which is
 the best case (one transcript).
+
+## Cross-dictation joins (BEA-677)
+
+Separate dictations (push-to-talk, or a new dictation after a stop) used to
+treat the engine's pause full stop as a real sentence end, so the next
+dictation into the same line started with a capital mid-sentence.
+`Sources/SusurroCore/CrossDictationJoin.swift` reuses the joint-clip method:
+
+- Susurro keeps the previous push-to-talk clip and its last speech sample.
+- A new dictation in the same app within `defaultMaxGap` (12 s) after a
+  previous one that ended in a single `.` gets a joint clip (previous tail +
+  pause + new speech) transcribed off the main thread (~70 ms).
+- Before typing, `CrossDictationJoin.check` must prove the `.` is Susurro's
+  and untouched: the readable text before the cursor ends with exactly what
+  Susurro typed, nothing after the cursor, the same caret/length for
+  cursorless (anchored) fields, and no user keystrokes. `?`, `!`, `...`, an
+  unreadable field, another app or a long gap: no change.
+- Continuation: one Backspace removes Susurro's `.` and the new text starts
+  lower-case (`I` and acronyms keep their case). Otherwise nothing changes.
+- text-handling.log: `xjoin=continue|break|unmatched gap=N` or
+  `xjoin=skip reason=<guard> gap=N` (no text).
+
+Harness:
+
+- `susurro-cli --xjoin --engine parakeet a.wav b.wav`, and
+  `scripts/xjoin_eval.py` (say TTS pairs; `--voice-pairs` for recorded
+  `Fixtures/voice/x*.wav`, prompts in `scripts/xjoin_pairs.tsv`).
+- Dev hooks in the running app, off unless
+  `defaults write com.mtwomey.susurro DevFeedHook -bool YES`:
+  - `scripts/context_probe.py`: the real AX read + resolve + text stage +
+    join guard on a background TextEdit scratch document; never types.
+  - `scripts/feed_wav.sh --target <bundle id> a.wav b.wav`: feeds WAVs as
+    dictations; types only if that app is frontmost (macOS may refuse a
+    scripted `activate`, so bring the target to the front by hand).
