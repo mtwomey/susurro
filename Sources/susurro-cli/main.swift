@@ -24,9 +24,13 @@ func errPrint(_ s: String) {
 let usage = """
 usage: susurro-cli [--post] <model.bin | parakeet-model-dir> <audio-file> [audio-file...]
        susurro-cli [--post] --engine whisper|parakeet [--model <path>] <audio-file> [audio-file...]
+       susurro-cli --xjoin [--gap <s>] --engine parakeet <dictation1> <dictation2> [...]
+         (consecutive separate dictations into one field, BEA-677; prints JSON)
 """
 
 var post = false
+var xJoin = false      // --xjoin: files are consecutive separate dictations (BEA-677)
+var xGap: Double = 3
 var handsFree = false   // --handsfree: segment each file like the app's hands-free pump and join (BEA-657)
 var minPause: Double?
 var engineKind: EngineKind?
@@ -37,6 +41,10 @@ while let a = it.next() {
     switch a {
     case "--post": post = true
     case "--handsfree": handsFree = true
+    case "--xjoin": xJoin = true
+    case "--gap":
+        guard let v = it.next(), let d = Double(v) else { errPrint(usage); exit(1) }
+        xGap = d
     case "--min-pause":
         guard let v = it.next(), let d = Double(v) else { errPrint(usage); exit(1) }
         minPause = d
@@ -111,6 +119,50 @@ do {
     // from DefaultRules, so results don't depend on the developer's rules.json.
     let processor = PostProcessor(userRulesURL: FileManager.default.temporaryDirectory
         .appendingPathComponent("susurro-cli-\(UUID().uuidString)/rules.json"))
+    if xJoin {
+        // Mirrors AppDelegate's push-to-talk insert path for separate
+        // dictations into one untouched field: text stage with the field's
+        // text as context, then the cross-dictation guard + joint-clip join.
+        func clean(_ s: String) -> String {
+            let f = TranscriptFilter.stripHallucinations(s, engine: engine.kind)
+            return f.isEmpty ? "" : processor.process(f, applySentenceCase: false)
+        }
+        let stage = TextHandlingStage.standard(smartSpacing: true, autoCapitalize: true)
+        var field = "", decisions: [String] = [], texts: [String] = []
+        var prev: (record: CrossDictationJoin.Previous, samples: [Float], last: Int)?
+        var clock = Date(timeIntervalSince1970: 0)
+        for path in positional {
+            let samples = try AudioFileLoader.loadSamples(url: URL(fileURLWithPath: path))
+            let processed = clean(try engine.transcribe(samples: samples))
+            texts.append(processed)
+            guard !processed.isEmpty else { continue }
+            let startedAt = clock.addingTimeInterval(xGap)
+            let ctx = field.isEmpty ? InsertContext(before: nil, source: .none)
+                                    : InsertContext(before: field, after: "", source: .anchoredValue)
+            var text = stage.apply(processed, ctx)
+            var decision: HandsFreeJoin.Decision?
+            let bounds = CrossDictationJoin.speechBounds(samples)
+            if let p = prev, CrossDictationJoin.worthDeciding(previous: p.record, pid: 1, startedAt: startedAt), let bounds {
+                let clip = HandsFreeJoin.jointClip(a: p.samples, aLastSpeechEnd: p.last, b: samples, bFirstSpeechStart: bounds.first)
+                decision = CrossDictationJoin.decide(previous: p.record, jointText: clean(try engine.transcribe(samples: clip)))
+            }
+            let verdict = CrossDictationJoin.check(previous: prev?.record, current: .init(
+                pid: 1, fieldID: nil, startedAt: startedAt, before: field.isEmpty ? nil : field, after: ""))
+            if case .eligible = verdict, let decision {
+                let edit = CrossDictationJoin.edit(decision: decision, next: text)
+                field.removeLast(edit.deleteBackward)
+                text = edit.text
+            }
+            decisions.append(CrossDictationJoin.logLine(verdict: verdict, gap: prev == nil ? nil : xGap, decision: decision))
+            field += text
+            clock = startedAt.addingTimeInterval(Double(samples.count) / 16_000)
+            prev = bounds.map { (CrossDictationJoin.Previous(typed: text, pid: 1, fieldID: nil, endedAt: clock), samples, $0.last) }
+        }
+        let out: [String: Any] = ["texts": texts, "decisions": decisions, "typed": field]
+        let data = try JSONSerialization.data(withJSONObject: out, options: [.sortedKeys])
+        print(String(data: data, encoding: .utf8)!)
+        exit(0)
+    }
     if handsFree {
         // Mirrors AppDelegate's hands-free pump: PauseSegmenter cuts, each chunk
         // transcribed alone (filter + PostProcessor, no sentence case), held

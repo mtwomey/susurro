@@ -1,0 +1,12 @@
+# Cross-dictation join pairs (BEA-677): record each row as its OWN push-to-talk clip,
+# with a normal pause between a and b. Expected join is in xjoin_eval.py (VOICE_EXPECT).
+x01a.wav	Yesterday I went to the store
+x01b.wav	and bought bananas
+x02a.wav	Today I plan
+x02b.wav	to go for a bike ride
+x03a.wav	I was thinking that we should probably
+x03b.wav	move the meeting to Thursday
+x04a.wav	The build is green.
+x04b.wav	Let's ship it tomorrow morning.
+x05a.wav	Thanks for the update.
+x05b.wav	I will review it tonight.

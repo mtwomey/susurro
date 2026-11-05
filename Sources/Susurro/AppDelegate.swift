@@ -65,6 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // decided from a joint transcript across the pause when the next chunk lands.
     private var hfJoiner = HeldMarkJoiner()
     private var hfPrevChunk: HFChunk?       // audio of the chunk whose mark is held
+    /// Cross-dictation joins (BEA-677): the previous push-to-talk insertion
+    /// and its audio, kept so the next dictation can decide its full stop.
+    private var xPrev: (record: CrossDictationJoin.Previous, samples: [Float], lastSpeech: Int)?
     private var now: Double { ProcessInfo.processInfo.systemUptime }
     private var engine: (any TranscriptionEngine)?
     // Bumped on every loadEngine() call; a load that finishes after a newer
@@ -90,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var micAccessDenied = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installDevFeedHook()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
             button.image = NSImage(
@@ -746,6 +750,135 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                             releaseBundleID: releaseApp?.bundleIdentifier, expectedPID: nil)
     }
 
+    /// Dev hook (BEA-677): feed a WAV into the running app instead of the
+    /// microphone, as if it were one push-to-talk dictation into the
+    /// frontmost app. Off unless `defaults write <bundle id> DevFeedHook -bool YES`.
+    ///   scripts/feed_wav.sh clip.wav   (posts com.susurro.dev.feedWAV, object = "<bundle id>|<path>")
+    private func installDevFeedHook() {
+        guard UserDefaults.standard.bool(forKey: "DevFeedHook") else { return }
+        slog("dev: feed-WAV hook enabled")
+        installDevProbeHook()
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.susurro.dev.feedWAV"), object: nil, queue: .main
+        ) { [weak self] note in
+            // object = "<expected frontmost bundle id>|<wav path>". The clip is
+            // only typed when that app is frontmost: a dev run must never
+            // type into whatever the user happens to be using.
+            guard let payload = note.object as? String, let bar = payload.firstIndex(of: "|") else { return }
+            let expected = String(payload[..<bar]), path = String(payload[payload.index(after: bar)...])
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let app = NSWorkspace.shared.frontmostApplication
+                guard !expected.isEmpty, app?.bundleIdentifier == expected else {
+                    slog("dev: feed WAV refused — frontmost app is not the expected target")
+                    return
+                }
+                do {
+                    let samples = try AudioFileLoader.loadSamples(url: URL(fileURLWithPath: path))
+                    slog("dev: feeding WAV (\(samples.count) samples)")
+                    self.transcribeAndInsert(samples, releasePID: app?.processIdentifier,
+                                             releaseBundleID: app?.bundleIdentifier, expectedPID: nil)
+                } catch {
+                    slog("dev: feed WAV failed: \(error)")
+                }
+            }
+        }
+    }
+
+    /// Dev context probe (BEA-677): run the real pre-insert pipeline
+    /// (FocusedFieldReader + InsertContext.resolve + TextHandlingStage) on the
+    /// frontmost app for a given transcript, WITHOUT typing anything. Same
+    /// DevFeedHook switch. object = "<target bundle id>|end|<transcript>"; the
+    /// result is written as JSON to ~/Library/Logs/Susurro/probe.json (dev
+    /// only: contains the field tail, never written in normal use).
+    private func installDevProbeHook() {
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.susurro.dev.probe"), object: nil, queue: .main
+        ) { [weak self] note in
+            guard let payload = note.object as? String, let bar = payload.firstIndex(of: "|") else { return }
+            // object = "<target bundle id>|<end|here>|<transcript>"
+            let expected = String(payload[..<bar])
+            var rest = payload[payload.index(after: bar)...]
+            var caretToEnd = false
+            if let bar2 = rest.firstIndex(of: "|") {
+                caretToEnd = rest[..<bar2] == "end"
+                rest = rest[rest.index(after: bar2)...]
+            }
+            // Optional "prev=<text Susurro typed last>|" segment: also report
+            // the cross-dictation guard verdict against the live field.
+            var prevTyped: String?
+            if rest.hasPrefix("prev="), let bar3 = rest.firstIndex(of: "|") {
+                prevTyped = String(rest[rest.index(rest.startIndex, offsetBy: 5)..<bar3])
+                rest = rest[rest.index(after: bar3)...]
+            }
+            let transcript = String(rest)
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // The target need not be frontmost: Accessibility reads each
+                // app's own focused element, so the probe runs on a background
+                // scratch window and never touches the app the user is in.
+                let app = NSRunningApplication.runningApplications(withBundleIdentifier: expected).first
+                var out: [String: Any] = ["frontmost": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?",
+                                          "target": expected]
+                let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Susurro")
+                func write() {
+                    try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+                    if let data = try? JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]) {
+                        try? data.write(to: logs.appendingPathComponent("probe.json"))
+                    }
+                }
+                guard let app else { out["error"] = "target_not_running"; write(); return }
+                if caretToEnd { Self.devMoveCaretToEnd(pid: app.processIdentifier) }
+                let pid = app.processIdentifier
+                let snapshot = FocusedFieldReader.readNow(pid: pid, bundleID: app.bundleIdentifier)
+                let (context, provider) = InsertContext.resolve(
+                    snapshot: snapshot, memory: self.dictationMemory.insertionIfStillFocused(pid: pid),
+                    pid: pid, bundleID: app.bundleIdentifier, engine: self.engine?.kind,
+                    secureInput: IsSecureEventInputEnabled())
+                let stage = TextHandlingStage.standard(smartSpacing: self.smartSpacingEnabled,
+                                                       autoCapitalize: self.postProcessor.autoCapitalizeEnabled)
+                out["source"] = context.source.rawValue
+                out["provider"] = provider
+                out["detail"] = snapshot.detail
+                out["beforeTail"] = context.before.map { String($0.suffix(40)) } ?? NSNull()
+                out["afterHead"] = context.after.map { String($0.prefix(40)) } ?? NSNull()
+                out["startsSentence"] = context.startsSentence
+                out["output"] = stage.apply(transcript, context)
+                if let prevTyped {
+                    let readable = [.accessibility, .anchoredValue, .appBridge].contains(context.source) && context.before != nil
+                    let now = Date()
+                    let verdict = CrossDictationJoin.check(
+                        previous: .init(typed: prevTyped, pid: pid, fieldID: nil, endedAt: now.addingTimeInterval(-3)),
+                        current: .init(pid: pid, fieldID: nil, startedAt: now,
+                                       before: readable ? context.before : nil, after: context.after))
+                    switch verdict {
+                    case .eligible: out["xjoin"] = "eligible"
+                    case .ineligible(let r): out["xjoin"] = r.rawValue
+                    }
+                }
+                write()
+                slog("dev: context probe written")
+            }
+        }
+    }
+
+    /// Dev only: put the caret at the end of the target app's focused text
+    /// element (AX selected range), so probes start from a known position.
+    private static func devMoveCaretToEnd(pid: pid_t) {
+        let appEl = AXUIElementCreateApplication(pid)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appEl, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let el = focused else { return }
+        let element = el as! AXUIElement
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success,
+              let text = value as? String else { return }
+        var range = CFRange(location: (text as NSString).length, length: 0)
+        if let axRange = AXValueCreate(.cfRange, &range) {
+            AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, axRange)
+        }
+    }
+
     /// Transcribe `samples` and insert the result into the focused field.
     /// `expectedPID` (hands-free chunks): if another app is frontmost by the
     /// time the text is ready, it goes to the clipboard instead of being typed
@@ -838,6 +971,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     break
                 }
             }
+            // Cross-dictation join (BEA-677): a separate dictation right after
+            // Susurro's previous one. Decide the previous full stop from a
+            // joint clip now; the field guards run before insertion.
+            let startedAt = Date().addingTimeInterval(-Double(samples.count) / 16_000)
+            var xDecision: HandsFreeJoin.Decision?
+            if hfChunk == nil, !processed.isEmpty {
+                let prev = await MainActor.run { [weak self] in self?.xPrev }
+                if let prev, CrossDictationJoin.worthDeciding(previous: prev.record, pid: releasePID, startedAt: startedAt),
+                   let bounds = CrossDictationJoin.speechBounds(samples) {
+                    let clip = HandsFreeJoin.jointClip(a: prev.samples, aLastSpeechEnd: prev.lastSpeech,
+                                                       b: samples, bFirstSpeechStart: bounds.first)
+                    let joinStart = clock.now
+                    let jointRaw = (try? engine.transcribe(samples: clip)) ?? ""
+                    timings.joinTranscribe = clock.now - joinStart
+                    let joint = postProcessor.process(TranscriptFilter.stripHallucinations(jointRaw, engine: engine.kind),
+                                                      applySentenceCase: false)
+                    xDecision = CrossDictationJoin.decide(previous: prev.record, jointText: joint)
+                }
+            }
+            let crossDecision = xDecision
             let joinText = joinedText
             let joinAfter = heldBody
             let prevShown = heldShown, prevMark = heldMark, decision = joinDecision
@@ -917,10 +1070,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     // at the wrong spot).
                     if HandsFreeJoin.isInPlace(before: context.before, previousBody: joinAfter) { text = joinText } else { slog("handsfree: cursor moved, join skipped") }
                 }
+                var xLog = ""
+                if !isHandsFree, joinText == nil, let frontmostPID, let prev = self.xPrev {
+                    var position: ValuePosition?
+                    if context.source == .anchoredValue, let before = context.before, let value = fieldRead?.value {
+                        position = ValuePosition(caretOffset: (before as NSString).length,
+                                                 valueLength: (value as NSString).length)
+                    }
+                    let current = CrossDictationJoin.Current(pid: frontmostPID, fieldID: nil, startedAt: startedAt,
+                                                             before: readableField ? context.before : nil,
+                                                             after: context.after, position: position)
+                    let verdict = CrossDictationJoin.check(previous: prev.record, current: current)
+                    if case .eligible = verdict, let crossDecision, !text.isEmpty {
+                        let edit = CrossDictationJoin.edit(decision: crossDecision, next: text)
+                        deleteCount = edit.deleteBackward
+                        text = edit.text
+                    }
+                    xLog = " " + CrossDictationJoin.logLine(verdict: verdict,
+                                                            gap: startedAt.timeIntervalSince(prev.record.endedAt),
+                                                            decision: crossDecision)
+                }
                 let readDetail = fieldRead?.detail ?? (pendingFieldRead == nil ? "notRead" : "timeout")
                 // Logged once per dictation, after insertion, with per-stage
                 // timings (BEA-663, F8). Numbers only — never field text.
-                let logLine = "source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)"
+                let logLine = "source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)\(xLog)"
                 var lineTimings = stageTimings
                 // Show this piece's own end mark now if the field is readable;
                 // otherwise it stays held (typed at the next join or at stop).
@@ -949,12 +1122,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     var position: ValuePosition?
                     if context.source == .anchoredValue, let before = context.before,
                        let value = fieldRead?.value {
-                        let typedLength = (text as NSString).length
-                        position = ValuePosition(caretOffset: (before as NSString).length + typedLength,
-                                                 valueLength: (value as NSString).length + typedLength)
+                        position = ValuePosition.afterInsertion(before: before, value: value, typed: text,
+                                                                deletedBackward: deleteCount)
                     }
-                    self.dictationMemory.recordTyped(text, intoPID: frontmostPID, position: position)
+                    // Unknown context (source none): what preceded this insertion
+                    // is not known, so the remembered tail starts fresh instead of
+                    // gluing onto a tail the user may have deleted (BEA-677).
+                    self.dictationMemory.recordTyped(text, intoPID: frontmostPID, position: position,
+                                                     continuesTail: context.source != .none)
+                    if !isHandsFree, let bounds = CrossDictationJoin.speechBounds(samples) {
+                        let record = CrossDictationJoin.Previous(typed: text, pid: frontmostPID, fieldID: nil,
+                                                                 endedAt: Date(), position: position)
+                        self.xPrev = (record, samples, bounds.last)
+                    } else {
+                        self.xPrev = nil
+                    }
                 } else {
+                    self.xPrev = nil
                     // Nothing was actually typed (secure input blocked it, a
                     // keystroke event failed to post, or we couldn't identify
                     // the frontmost app) — don't let a stale tail leak into
