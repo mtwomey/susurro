@@ -691,7 +691,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let releaseBundleID = releaseApp?.bundleIdentifier
         var fieldTask: Task<FieldSnapshot?, Never>?
         if smartSpacingEnabled, !IsSecureEventInputEnabled(), let pid = releasePID {
-            fieldTask = Task.detached(priority: .userInitiated) { await FocusedFieldReader.read(pid: pid) }
+            fieldTask = Task.detached(priority: .userInitiated) { await FocusedFieldReader.read(pid: pid, bundleID: releaseBundleID) }
         }
         let pendingFieldRead = fieldTask
         Task.detached(priority: .userInitiated) {

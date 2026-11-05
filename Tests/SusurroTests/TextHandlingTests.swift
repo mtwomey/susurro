@@ -294,4 +294,30 @@ import Testing
         #expect(p == "memory")
         #expect(c.before == "we left.")
     }
+
+    // App bridge (Emacs server)
+
+    @Test func appBridgeAnswerWinsAndIsExact() {
+        let snap = FieldSnapshot(appBefore: "Hello there", appBridge: "emacs")
+        let (c, p) = resolve(snap, memory: "Hello there.")
+        #expect(p == "appBridge.emacs")
+        #expect(c.source == .appBridge)
+        #expect(stage.apply("And then we left.", c) == " and then we left.")
+        #expect(!snap.detail.contains("Hello"))
+    }
+
+    @Test func emacsServerQuotingRoundTrips() {
+        let s = "-a b&c\nd"
+        #expect(EmacsServerProtocol.quote(s) == "&-a&_b&&c&nd")
+        #expect(EmacsServerProtocol.unquote(EmacsServerProtocol.quote(s)) == s)
+    }
+
+    @Test func emacsServerReplyParsing() {
+        let b64 = Data("Hello there. ".utf8).base64EncodedString()
+        #expect(EmacsServerProtocol.parse(reply: "-emacs-pid 42\n-print \"\(b64)\"\n") == "Hello there. ")
+        // Real Emacs 30 reply: the printed value carries a quoted newline.
+        #expect(EmacsServerProtocol.parse(reply: "-emacs-pid 42\n-print \"\(b64)\"&n\n") == "Hello there. ")
+        #expect(EmacsServerProtocol.parse(reply: "-emacs-pid 42\n-print \"SKIP\"\n") == nil)
+        #expect(EmacsServerProtocol.parse(reply: "-emacs-pid 42\n-error void-function\n") == nil)
+    }
 }

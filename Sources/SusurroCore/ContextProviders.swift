@@ -14,6 +14,7 @@ import Foundation
 //   empty value                             EmptyValueProvider       any cleared field (Enter-to-send)
 //   text markers (WebKit/Chromium)          TextMarkerProvider       Chrome, Electron
 //   value, no cursor                        AnchoredValueProvider    Warp, Terminal, Emacs (NS port)
+//   app answers itself (per-app bridge)     AppBridgeProvider        Emacs (server socket)
 //   nothing readable                        MemoryProvider           Susurro's own record of what it typed
 //
 // Adding a case means adding a provider, not editing the others.
@@ -32,14 +33,21 @@ public struct FieldSnapshot: Sendable, Equatable {
     public var role: String?
     /// The focused element is a secure (password) field; nothing was read.
     public var secure: Bool
+    /// Text before the cursor reported by the app itself through an app
+    /// bridge (per-app, last resort — e.g. the Emacs server), and its name.
+    public var appBefore: String?
+    public var appBridge: String?
 
     public init(value: String? = nil, selection: NSRange? = nil, markerBefore: String? = nil,
-                role: String? = nil, secure: Bool = false) {
+                role: String? = nil, secure: Bool = false,
+                appBefore: String? = nil, appBridge: String? = nil) {
         self.value = value
         self.selection = selection
         self.markerBefore = markerBefore
         self.role = role
         self.secure = secure
+        self.appBefore = appBefore
+        self.appBridge = appBridge
     }
 
     public static let secureField = FieldSnapshot(secure: true)
@@ -72,6 +80,7 @@ public struct FieldSnapshot: Sendable, Equatable {
         if let selection { parts.append("caret=\(selection.location)") }
         if let markerBefore { parts.append("markerLen=\(markerBefore.count)") }
         if corruptValue { parts.append("corruptValue") }
+        if let appBefore { parts.append("bridge=\(appBridge ?? "?") len=\(appBefore.count)") }
         return parts.joined(separator: " ")
     }
 }
@@ -89,6 +98,19 @@ public protocol ContextProvider: Sendable {
     /// `memory` is what Susurro last typed into this same app, and where
     /// (nil if nothing, or another app since).
     func context(_ snapshot: FieldSnapshot, memory: RememberedInsertion?) -> ProvidedContext?
+}
+
+/// Text the app itself reported through an app bridge. The only per-app
+/// source: used where an app's Accessibility data is unusable and the app
+/// offers its own exact answer (Emacs server). Exact, so it goes first.
+public struct AppBridgeProvider: ContextProvider {
+    public let name = "appBridge"
+    public init() {}
+    public func context(_ s: FieldSnapshot, memory: RememberedInsertion?) -> ProvidedContext? {
+        guard let before = s.appBefore else { return nil }
+        return ProvidedContext(before: before, after: nil, source: .appBridge,
+                               provider: name + "." + (s.appBridge ?? "?"))
+    }
 }
 
 /// Value + selection: the standard Cocoa contract. A caret past the end of
@@ -249,7 +271,7 @@ public struct MemoryProvider: ContextProvider {
 
 public extension InsertContext {
     static let standardProviders: [any ContextProvider] = [
-        SelectionRangeProvider(), EmptyValueProvider(), TextMarkerProvider(),
+        AppBridgeProvider(), SelectionRangeProvider(), EmptyValueProvider(), TextMarkerProvider(),
         AnchoredValueProvider(), MemoryProvider(),
     ]
 

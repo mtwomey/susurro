@@ -17,12 +17,12 @@ enum FocusedFieldReader {
     nonisolated(unsafe) private static var enabledPIDs = Set<pid_t>()
     private static let lock = NSLock()
 
-    static func read(pid: pid_t, cap: Duration = .milliseconds(250)) async -> FieldSnapshot? {
+    static func read(pid: pid_t, bundleID: String?, cap: Duration = .milliseconds(250)) async -> FieldSnapshot? {
         await withTaskGroup(of: FieldSnapshot??.self) { group in
             group.addTask {
                 await withCheckedContinuation { continuation in
                     DispatchQueue.global(qos: .userInitiated).async {
-                        continuation.resume(returning: readNow(pid: pid))
+                        continuation.resume(returning: readNow(pid: pid, bundleID: bundleID))
                     }
                 }
             }
@@ -39,7 +39,13 @@ enum FocusedFieldReader {
     /// Synchronous read; blocking AX IPC, so never call on the main thread.
     /// Collects raw facts only — interpretation is the `ContextProvider`s' job
     /// (SusurroCore/ContextProviders.swift).
-    static func readNow(pid: pid_t) -> FieldSnapshot {
+    static func readNow(pid: pid_t, bundleID: String?) -> FieldSnapshot {
+        if IsSecureEventInputEnabled() { return .secureField }
+        // Per-app bridge first, only for its own app; when it answers, the
+        // Accessibility read is skipped entirely.
+        if let bridge = AppBridges.bridge(for: bundleID), let before = bridge.textBeforeCursor() {
+            return FieldSnapshot(appBefore: before, appBridge: bridge.name)
+        }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.2)
         enableManualAccessibilityOnce(app: app, pid: pid)

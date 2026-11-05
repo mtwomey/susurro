@@ -18,6 +18,8 @@ public enum ContextSource: String, Sendable, Equatable {
     /// cursor located by anchoring on what Susurro last typed — see
     /// `AnchoredValueProvider`.
     case anchoredValue
+    /// The app itself reported the text before the cursor (app bridge).
+    case appBridge
     /// Nothing known: treated as an empty field (board decision 2).
     case none
 }
