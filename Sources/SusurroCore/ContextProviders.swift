@@ -37,10 +37,16 @@ public struct FieldSnapshot: Sendable, Equatable {
     /// bridge (per-app, last resort — e.g. the Emacs server), and its name.
     public var appBefore: String?
     public var appBridge: String?
+    /// Placeholder strings the field may echo as its value when empty:
+    /// `kAXPlaceholderValueAttribute`, plus any CSS-generated placeholders
+    /// declared in `GeneratedPlaceholders` (BEA-673). Never logged.
+    public var placeholders: [String]
 
     public init(value: String? = nil, selection: NSRange? = nil, markerBefore: String? = nil,
                 role: String? = nil, secure: Bool = false,
-                appBefore: String? = nil, appBridge: String? = nil) {
+                appBefore: String? = nil, appBridge: String? = nil,
+                placeholders: [String] = []) {
+        self.placeholders = placeholders
         self.value = value
         self.selection = selection
         self.markerBefore = markerBefore
@@ -58,7 +64,20 @@ public struct FieldSnapshot: Sendable, Equatable {
     /// against it) is dropped, so the memory fallback applies instead of
     /// anchoring inside garbage.
     public var sanitized: FieldSnapshot {
-        guard let value, value.contains("\u{0}") else { return self }
+        guard let value else { return self }
+        if !value.contains("\u{0}") {
+            guard FieldSnapshot.looksEmpty(value, placeholders: placeholders) else { return self }
+            // An empty-looking field (BEA-673): only newlines / zero-width
+            // scaffolding, or an echo of its own placeholder. Treat it as
+            // truly empty so no leading space is added; the marker prefix
+            // would echo the same placeholder, so it is dropped too.
+            var copy = self
+            copy.value = ""
+            copy.selection = NSRange(location: 0, length: 0)
+            copy.markerBefore = nil
+            copy.emptyEcho = true
+            return copy
+        }
         var copy = self
         copy.value = nil
         copy.selection = nil
@@ -69,6 +88,31 @@ public struct FieldSnapshot: Sendable, Equatable {
 
     /// Set by `sanitized` when the value was dropped.
     public var corruptValue = false
+    /// Set by `sanitized` when a non-empty value was recognised as an empty
+    /// field (placeholder echo or newline/zero-width scaffolding).
+    public var emptyEcho = false
+
+    /// Characters editors leave in an empty field that are not text.
+    static let scaffolding: Set<Unicode.Scalar> = ["\u{200B}", "\u{200C}", "\u{200D}", "\u{2060}", "\u{FEFF}"]
+
+    /// The value with zero-width scaffolding removed and surrounding line
+    /// breaks trimmed (a cleared contenteditable keeps a `<br>`).
+    static func visibleBody(_ value: String) -> String {
+        var scalars = String.UnicodeScalarView()
+        scalars.append(contentsOf: value.unicodeScalars.filter { !scaffolding.contains($0) })
+        return String(scalars).trimmingCharacters(in: .newlines)
+    }
+
+    /// True when `value` is what an empty field reports: nothing but line
+    /// breaks / zero-width characters, or exactly one of its placeholders
+    /// (Chromium exposes CSS `::before { content: attr(data-placeholder) }`
+    /// as the value of an empty contenteditable — BEA-673).
+    public static func looksEmpty(_ value: String, placeholders: [String]) -> Bool {
+        if value.isEmpty { return false } // already empty; nothing to rewrite
+        let body = visibleBody(value)
+        if body.isEmpty { return true }
+        return placeholders.contains { !$0.isEmpty && visibleBody($0) == body }
+    }
     /// Nothing focused, or the read timed out.
     public static let nothing = FieldSnapshot()
 
@@ -80,6 +124,7 @@ public struct FieldSnapshot: Sendable, Equatable {
         if let selection { parts.append("caret=\(selection.location)") }
         if let markerBefore { parts.append("markerLen=\(markerBefore.count)") }
         if corruptValue { parts.append("corruptValue") }
+        if emptyEcho { parts.append("emptyEcho") }
         if let appBefore { parts.append("bridge=\(appBridge ?? "?") len=\(appBefore.count)") }
         return parts.joined(separator: " ")
     }
