@@ -17,8 +17,8 @@ enum FocusedFieldReader {
     nonisolated(unsafe) private static var enabledPIDs = Set<pid_t>()
     private static let lock = NSLock()
 
-    static func read(pid: pid_t, cap: Duration = .milliseconds(250)) async -> FieldRead? {
-        await withTaskGroup(of: FieldRead??.self) { group in
+    static func read(pid: pid_t, cap: Duration = .milliseconds(250)) async -> FieldSnapshot? {
+        await withTaskGroup(of: FieldSnapshot??.self) { group in
             group.addTask {
                 await withCheckedContinuation { continuation in
                     DispatchQueue.global(qos: .userInitiated).async {
@@ -37,51 +37,26 @@ enum FocusedFieldReader {
     }
 
     /// Synchronous read; blocking AX IPC, so never call on the main thread.
-    static func readNow(pid: pid_t) -> FieldRead? {
+    /// Collects raw facts only — interpretation is the `ContextProvider`s' job
+    /// (SusurroCore/ContextProviders.swift).
+    static func readNow(pid: pid_t) -> FieldSnapshot {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.2)
         enableManualAccessibilityOnce(app: app, pid: pid)
 
-        guard let focused: AXUIElement = copy(app, kAXFocusedUIElementAttribute) else {
-            return FieldRead(before: nil, after: nil, detail: "noFocusedElement")
-        }
+        guard let focused: AXUIElement = copy(app, kAXFocusedUIElementAttribute) else { return .nothing }
         AXUIElementSetMessagingTimeout(focused, 0.2)
 
         let role: String? = copy(focused, kAXRoleAttribute)
         let subrole: String? = copy(focused, kAXSubroleAttribute)
-        if role == "AXSecureTextField" || subrole == (kAXSecureTextFieldSubrole as String) {
+        if role == "AXSecureTextField" || subrole == (kAXSecureTextFieldSubrole as String)
+            || IsSecureEventInputEnabled() {
             return .secureField
         }
-        if IsSecureEventInputEnabled() { return .secureField }
-
         let value: String? = copy(focused, kAXValueAttribute)
-
-        // Native text views: whole value + CFRange selection.
-        if let value, let range = selectedRange(focused) {
-            var read = FieldRead.fromValue(value, location: range.location, length: range.length)
-            read.detail += " role=\(role ?? "?")"
-            return read
-        }
-
-        // An empty value settles the empty-field case (stray leading space
-        // after Enter-to-send) even where the cursor is unreadable.
-        if let value, value.isEmpty {
-            return FieldRead(before: "", after: "", detail: "emptyValue role=\(role ?? "?")")
-        }
-
-        // Chromium / WebKit / Electron: text markers. The marker start may be
-        // the document start rather than the field start, so when the value
-        // is known the result must be a prefix of it; otherwise fall back.
-        if let before = textBeforeSelectionViaMarkers(focused),
-           value == nil || value!.hasPrefix(before) {
-            return FieldRead(before: before, after: value.map { String($0.dropFirst(before.count)) },
-                             detail: "markers beforeLen=\(before.count) role=\(role ?? "?")")
-        }
-        // Whole buffer, no cursor (Warp, Terminal): keep the end of the value
-        // for the BufferTail heuristic, which needs the memory anchor.
-        return FieldRead(before: nil, after: nil,
-                         detail: "unreadable role=\(role ?? "?") hasValue=\(value != nil)",
-                         bufferTail: value.map { String($0.suffix(512)) })
+        let selection = selectedRange(focused).map { NSRange(location: $0.location, length: $0.length) }
+        let markerBefore = selection == nil ? textBeforeSelectionViaMarkers(focused) : nil
+        return FieldSnapshot(value: value, selection: selection, markerBefore: markerBefore, role: role)
     }
 
     private static func enableManualAccessibilityOnce(app: AXUIElement, pid: pid_t) {

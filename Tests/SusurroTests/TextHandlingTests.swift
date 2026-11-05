@@ -1,4 +1,11 @@
 import Foundation
+
+/// A native text field with the caret between `before` and `after`.
+func caretSnapshot(_ before: String, _ after: String) -> FieldSnapshot {
+    FieldSnapshot(value: before + after,
+                  selection: NSRange(location: (before as NSString).length, length: 0),
+                  role: "AXTextField")
+}
 import Testing
 @testable import SusurroCore
 
@@ -7,9 +14,9 @@ import Testing
     let stage = TextHandlingStage.standard(smartSpacing: true, autoCapitalize: true)
 
     func ax(_ before: String?, after: String? = nil) -> InsertContext {
-        InsertContext.resolve(fieldRead: FieldRead(before: before, after: after),
+        InsertContext.resolve(snapshot: before.map { caretSnapshot($0, after ?? "") },
                               memoryTail: nil, pid: 42, bundleID: "com.example",
-                              engine: .parakeet, secureInput: false)
+                              engine: .parakeet, secureInput: false).0
     }
 
     // MARK: symptom 1 — stray leading space in an empty field
@@ -17,9 +24,9 @@ import Testing
     @Test func emptyFieldAfterEnterToSendGetsNoLeadingSpace() {
         // Memory still holds the last message's tail (same pid), but the AX
         // read says the field is empty: Accessibility wins.
-        let ctx = InsertContext.resolve(fieldRead: FieldRead(before: "", after: ""),
+        let ctx = InsertContext.resolve(snapshot: FieldSnapshot(value: "", role: "AXTextArea"),
                                         memoryTail: "there.", pid: 42, bundleID: nil,
-                                        engine: .whisper, secureInput: false)
+                                        engine: .whisper, secureInput: false).0
         #expect(ctx.source == .accessibility)
         #expect(stage.apply("Next message.", ctx) == "Next message.")
     }
@@ -75,21 +82,21 @@ import Testing
     // MARK: context resolution
 
     @Test func memoryIsFallbackWhenAccessibilityUnreadable() {
-        let ctx = InsertContext.resolve(fieldRead: FieldRead(before: nil), memoryTail: "go",
-                                        pid: 1, bundleID: nil, engine: nil, secureInput: false)
+        let ctx = InsertContext.resolve(snapshot: .nothing, memoryTail: "go",
+                                        pid: 1, bundleID: nil, engine: nil, secureInput: false).0
         #expect(ctx.source == .selfTracked)
         #expect(stage.apply("And then", ctx) == " and then")
-        let none = InsertContext.resolve(fieldRead: nil, memoryTail: nil,
-                                         pid: 1, bundleID: nil, engine: nil, secureInput: false)
+        let none = InsertContext.resolve(snapshot: nil, memoryTail: nil,
+                                         pid: 1, bundleID: nil, engine: nil, secureInput: false).0
         #expect(none.source == .none)
         #expect(none.before == nil)
     }
 
     @Test func secureFieldYieldsNoContext() {
-        let a = InsertContext.resolve(fieldRead: .secureField, memoryTail: "x",
-                                      pid: 1, bundleID: nil, engine: nil, secureInput: false)
-        let b = InsertContext.resolve(fieldRead: FieldRead(before: "abc"), memoryTail: "x",
-                                      pid: 1, bundleID: nil, engine: nil, secureInput: true)
+        let a = InsertContext.resolve(snapshot: .secureField, memoryTail: "x",
+                                      pid: 1, bundleID: nil, engine: nil, secureInput: false).0
+        let b = InsertContext.resolve(snapshot: caretSnapshot("abc", ""), memoryTail: "x",
+                                      pid: 1, bundleID: nil, engine: nil, secureInput: true).0
         #expect(a.secureInput && a.before == nil && a.source == .none)
         #expect(b.secureInput && b.before == nil && b.source == .none)
     }
@@ -118,61 +125,111 @@ import Testing
     }
 }
 
-@Suite struct FieldReadTests {
-    @Test func caretPastValueEndMeansCollapsedTrailingSpace() {
-        // Gecko reports "we left." but the caret sits after the typed space.
-        let read = FieldRead.fromValue("we left.", location: 9, length: 0)
-        #expect(read.before == "we left. ")
-        let stage = TextHandlingStage.standard(smartSpacing: true, autoCapitalize: true)
-        let ctx = InsertContext.resolve(fieldRead: read, memoryTail: nil, pid: 1,
-                                        bundleID: nil, engine: nil, secureInput: false)
-        #expect(stage.apply("it was late.", ctx) == "It was late.")
-    }
-
-    @Test func caretInsideValueSplitsBeforeAndAfter() {
-        let read = FieldRead.fromValue("hello world", location: 5, length: 0)
-        #expect(read.before == "hello")
-        #expect(read.after == " world")
-        #expect(!read.detail.contains("hello"))
-    }
-}
-
-@Suite struct BufferTailTests {
+@Suite struct ContextProviderTests {
     let stage = TextHandlingStage.standard(smartSpacing: true, autoCapitalize: true)
 
-    func ctx(buffer: String, memory: String) -> InsertContext {
-        InsertContext.resolve(fieldRead: FieldRead(before: nil, bufferTail: buffer),
-                              memoryTail: memory, pid: 1, bundleID: "dev.warp.Warp-Stable",
+    func resolve(_ snap: FieldSnapshot?, memory: String?) -> (InsertContext, String) {
+        InsertContext.resolve(snapshot: snap, memoryTail: memory, pid: 1, bundleID: nil,
                               engine: nil, secureInput: false)
     }
 
-    @Test func deletedFullStopIsSeenInWarp() {
-        let c = ctx(buffer: "$ echo\nHello there", memory: "Hello there.")
-        #expect(c.source == .bufferTail)
-        #expect(stage.apply("And then we left.", c) == " and then we left.")
-    }
+    // Selection range (native fields, Gecko)
 
-    @Test func typedSpaceIsSeenInWarp() {
-        let c = ctx(buffer: "prompt> Hello there. ", memory: "Hello there.")
+    @Test func caretPastValueEndMeansCollapsedTrailingSpace() {
+        let snap = FieldSnapshot(value: "we left.", selection: NSRange(location: 9, length: 0))
+        let (c, p) = resolve(snap, memory: nil)
+        #expect(p == "selectionRange")
+        #expect(c.before == "we left. ")
         #expect(stage.apply("it was late.", c) == "It was late.")
     }
 
-    @Test func trailingNewlinesInBufferAreIgnored() {
-        let c = ctx(buffer: "x Hello there\n\n", memory: "Hello there.")
-        #expect(c.source == .bufferTail)
+    @Test func caretInsideValueSplitsBeforeAndAfter() {
+        let (c, _) = resolve(caretSnapshot("hello", " world"), memory: nil)
+        #expect(c.before == "hello")
+        #expect(c.after == " world")
     }
 
-    @Test func unrelatedBufferEndFallsBackToMemory() {
-        let c = ctx(buffer: "lots of new output scrolled in here", memory: "Hello there.")
-        #expect(c.source == .selfTracked)
-        let far = ctx(buffer: "Hello there. plus much more typed", memory: "Hello there.")
-        #expect(far.source == .selfTracked)
+    @Test func snapshotDetailCarriesNoText() {
+        let snap = FieldSnapshot(value: "secret words", selection: NSRange(location: 3, length: 0),
+                                 markerBefore: "sec", role: "AXTextArea")
+        #expect(!snap.detail.contains("secret"))
+        #expect(!snap.detail.contains("sec "))
+        #expect(snap.detail.contains("valueLen=12"))
     }
 
-    @Test func noMemoryMeansNoBufferContext() {
-        let c = InsertContext.resolve(fieldRead: FieldRead(before: nil, bufferTail: "abc"),
-                                      memoryTail: nil, pid: 1, bundleID: nil, engine: nil,
-                                      secureInput: false)
-        #expect(c.source == .none)
+    // Text markers
+
+    @Test func markersMustBeAPrefixOfTheValue() {
+        let ok = FieldSnapshot(value: "draft text", markerBefore: "draft")
+        #expect(resolve(ok, memory: nil).1 == "textMarkers")
+        let doc = FieldSnapshot(value: "draft text", markerBefore: "Page title draft")
+        #expect(resolve(doc, memory: "xyz").1 == "memory")
+    }
+
+    // Anchored value: terminals (cursor at the end)
+
+    func buffer(_ v: String) -> FieldSnapshot { FieldSnapshot(value: v, role: "AXTextArea") }
+
+    @Test func terminalDeletedFullStop() {
+        let (c, p) = resolve(buffer("$ echo\nHello there"), memory: "Hello there.")
+        #expect(p == "anchoredValue.end")
+        #expect(stage.apply("And then we left.", c) == " and then we left.")
+    }
+
+    @Test func terminalTypedSpace() {
+        let (c, _) = resolve(buffer("prompt> Hello there. "), memory: "Hello there.")
+        #expect(stage.apply("it was late.", c) == "It was late.")
+    }
+
+    @Test func terminalTrailingNewlinesIgnored() {
+        #expect(resolve(buffer("x Hello there\n\n"), memory: "Hello there.").1 == "anchoredValue.end")
+    }
+
+    // Anchored value: editors (cursor mid-buffer, e.g. Emacs)
+
+    @Test func editorCursorMidBuffer() {
+        let text = ";; notes\nFirst line I said\n\nlater paragraph.\n"
+        let (c, p) = resolve(buffer(text), memory: "line I said")
+        #expect(p == "anchoredValue.interior")
+        #expect(c.before?.hasSuffix("First line I said") == true)
+        #expect(stage.apply("And more", c) == " and more")
+    }
+
+    @Test func editorDeletedCharacterMidBuffer() {
+        let text = "Intro.\nWe agreed on it\nTail text.\n"
+        let (c, p) = resolve(buffer(text), memory: "agreed on it.")
+        #expect(p == "anchoredValue.interior")
+        #expect(c.before?.hasSuffix("agreed on it") == true)
+    }
+
+    @Test func ambiguousAnchorFallsBackToMemory() {
+        let text = "ok thanks\nok thanks\nmore"
+        #expect(resolve(buffer(text), memory: "ok thanks").1 == "memory")
+    }
+
+    @Test func noAnchorFallsBackToMemory() {
+        #expect(resolve(buffer("lots of new output scrolled in"), memory: "Hello there.").1 == "memory")
+    }
+
+    @Test func noMemoryMeansNoAnchor() {
+        let (c, p) = resolve(buffer("abc"), memory: nil)
+        #expect(p == "none")
+        #expect(c.before == nil)
+    }
+
+    // Pluggability
+
+    @Test func customProviderOrderIsHonoured() {
+        struct Fixed: ContextProvider {
+            let name = "fixed"
+            func context(_ s: FieldSnapshot, memoryTail: String?) -> ProvidedContext? {
+                ProvidedContext(before: "x", after: nil, source: .accessibility, provider: name)
+            }
+        }
+        let (c, p) = InsertContext.resolve(snapshot: caretSnapshot("abc", ""), memoryTail: nil,
+                                           pid: nil, bundleID: nil, engine: nil, secureInput: false,
+                                           providers: [Fixed(), SelectionRangeProvider()])
+        #expect(p == "fixed")
+        #expect(c.before == "x")
     }
 }

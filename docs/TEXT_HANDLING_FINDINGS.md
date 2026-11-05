@@ -191,6 +191,25 @@ with the app, the context source and the AX read path (lengths/positions only, n
 The unified log does not keep Susurro's NSLog lines, so `log show` cannot be used for this.
 Note: the engines end sentences with a full stop, so step 1 gives `Hello there.`
 
+### 5.1 Context providers (pluggable, keyed on shape, not on app)
+The Accessibility reader (`FocusedFieldReader`) only collects raw facts into a `FieldSnapshot`
+(value, selected range, text-marker prefix, role, secure). An ordered list of pure
+`ContextProvider`s in `SusurroCore/ContextProviders.swift` interprets it; the first answer wins:
+
+| Shape the app exposes | Provider | Seen in |
+|---|---|---|
+| value + selected range | `SelectionRangeProvider` (caret past value end = collapsed trailing space) | TextEdit, Zen/Firefox, Safari fields |
+| empty value | `EmptyValueProvider` | any cleared field |
+| WebKit/Chromium text markers | `TextMarkerProvider` (must be a prefix of the value) | Chrome, Electron |
+| value, no cursor | `AnchoredValueProvider`: cursor = end of value if it ends with what Susurro last typed (≤ 8 chars of user edits, no newline); else right after a unique occurrence of that text (or a prefix of it) anywhere in the value; ambiguous = no answer | Warp, Terminal/iTerm (end), Emacs NS port (window value = buffer; interior) |
+| nothing readable | `MemoryProvider` | everything else |
+
+No provider looks at a bundle ID, so each covers every app with that shape. A new case means a new
+provider in the list. Coverage log lines name the provider (`provider=anchoredValue.interior` etc.).
+Limits: a value with no cursor and no Susurro text in it (the first dictation, or after clearing)
+gives no answer, so the empty-field policy applies; with the cursor mid-buffer a space the user typed
+after the anchor is not seen.
+
 ### 6.1 Per-app coverage
 Board decision (2026-11-04): the table covers the apps Matthew actually uses (Zen, Warp, and any he adds;
 Emacs showed up in the log), not the original six. Terminals: the buffer-end heuristic
@@ -208,4 +227,4 @@ to 8 characters of the user's own edits and no newline; otherwise the memory fal
 | Terminal | | | |
 | Zen (Gecko) | accessibility, `range` path, role AXTextField (log: valueLen/caret consistent) | all OK on retest (72de228) | First run had a double space at step 3; the retest passed. The log never showed a caret past the value end, so the caret-past-end rule is unproven as the cause; it stays as a harmless guard |
 | Warp | `bufferTail` (AXTextArea, whole buffer, no caret); empty prompt → `none` | all OK on retest (5b9e5f6): log 03:52 shows none → bufferTail → bufferTail | First run (memory only): capital "And" after a deleted full stop, double space after a typed space; fixed by the buffer-end rule |
-| Emacs | AX unreadable (focused role AXWindow) → memory / none | not scripted | Seen in the log; memory fallback only |
+| Emacs 30.1 (NS) | probe: focused element is the AXWindow, value = buffer text (605 chars, 32 lines), no range/line-number attributes → `AnchoredValueProvider` | retest pending | Same class as Warp; the interior anchor covers a cursor mid-buffer |

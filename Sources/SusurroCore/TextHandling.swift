@@ -14,53 +14,12 @@ public enum ContextSource: String, Sendable, Equatable {
     case accessibility
     /// Susurro's own memory of what it last typed into this app.
     case selfTracked
-    /// The end of a whole-buffer AX value with no readable cursor (Warp,
-    /// Terminal), anchored on what Susurro last typed — see `BufferTail`.
-    case bufferTail
+    /// A readable value with no readable cursor (terminals, Emacs), with the
+    /// cursor located by anchoring on what Susurro last typed — see
+    /// `AnchoredValueProvider`.
+    case anchoredValue
     /// Nothing known: treated as an empty field (board decision 2).
     case none
-}
-
-/// What an Accessibility read of the focused field returned. Produced by the
-/// app target's `FocusedFieldReader`; kept here so context resolution is testable.
-public struct FieldRead: Sendable, Equatable {
-    /// Text before the cursor (or the selection start). nil = unreadable.
-    public var before: String?
-    /// Text after the cursor (or the selection end). nil = unreadable.
-    public var after: String?
-    /// The focused element is a secure (password) field; nothing was read.
-    public var secure: Bool
-    /// Which read path produced this, plus lengths/positions only — never
-    /// field text. For the per-app coverage log.
-    public var detail: String
-    /// The end of the field's value when the value is readable but the
-    /// cursor is not (terminal buffers). Used only with the memory anchor.
-    public var bufferTail: String?
-
-    public init(before: String?, after: String? = nil, secure: Bool = false, detail: String = "",
-                bufferTail: String? = nil) {
-        self.before = before
-        self.after = after
-        self.secure = secure
-        self.detail = detail
-        self.bufferTail = bufferTail
-    }
-
-    /// Builds a read from a whole field value and its selection. Some apps
-    /// (Gecko contenteditable inputs, e.g. Firefox/Zen) drop a trailing typed
-    /// space from the reported value but keep the caret after it, so a caret
-    /// past the end of the value means whitespace the value doesn't show.
-    public static func fromValue(_ value: String, location: Int, length: Int) -> FieldRead {
-        let ns = value as NSString
-        let start = max(0, min(location, ns.length))
-        let end = max(start, min(location + max(length, 0), ns.length))
-        var before = ns.substring(to: start)
-        if location > ns.length { before += " " }
-        return FieldRead(before: before, after: ns.substring(from: end),
-                         detail: "range valueLen=\(ns.length) caret=\(location)")
-    }
-
-    public static let secureField = FieldRead(before: nil, after: nil, secure: true, detail: "secure")
 }
 
 public struct InsertContext: Sendable, Equatable {
@@ -88,36 +47,6 @@ public struct InsertContext: Sendable, Equatable {
 
     /// No context at all — the empty-field policy applies.
     public static let unknown = InsertContext(before: nil, source: .none)
-
-    /// Combines an Accessibility read with the self-tracked fallback.
-    /// Accessibility wins whenever it produced a `before`; otherwise the
-    /// memory tail (if Susurro typed into this same app last) is used; with
-    /// neither, `before` is nil and the stage treats the field as empty.
-    /// Secure input or a secure field never yields any context.
-    public static func resolve(fieldRead: FieldRead?, memoryTail: String?,
-                               pid: pid_t?, bundleID: String?, engine: EngineKind?,
-                               secureInput: Bool) -> InsertContext {
-        let secure = secureInput || (fieldRead?.secure ?? false)
-        if secure {
-            return InsertContext(before: nil, source: .none, pid: pid, bundleID: bundleID,
-                                 engine: engine, secureInput: true)
-        }
-        if let read = fieldRead, let before = read.before {
-            return InsertContext(before: before, after: read.after, source: .accessibility,
-                                 pid: pid, bundleID: bundleID, engine: engine, secureInput: false)
-        }
-        if let buffer = fieldRead?.bufferTail, let memoryTail,
-           let before = BufferTail.before(buffer: buffer, memoryTail: memoryTail) {
-            return InsertContext(before: before, source: .bufferTail, pid: pid,
-                                 bundleID: bundleID, engine: engine, secureInput: false)
-        }
-        if let memoryTail {
-            return InsertContext(before: memoryTail, source: .selfTracked, pid: pid,
-                                 bundleID: bundleID, engine: engine, secureInput: false)
-        }
-        return InsertContext(before: nil, source: .none, pid: pid, bundleID: bundleID,
-                             engine: engine, secureInput: false)
-    }
 
     /// True when the dictation starts a sentence: unknown/empty context, the
     /// cursor at the start of a line, or the preceding text ends in `.?!`
@@ -247,46 +176,5 @@ public struct TextHandlingStage: Sendable {
 
     public func apply(_ text: String, _ context: InsertContext) -> String {
         transforms.reduce(text) { $1.apply($0, context) }
-    }
-}
-
-/// Board decision (BEA-648, Warp): when an app exposes its whole buffer but
-/// not the cursor, treat the end of the buffer as the text before the cursor
-/// if it still ends with what Susurro last typed, allowing for a few
-/// characters of the user's own edits (a deleted full stop, a typed space).
-/// Otherwise nil, and the memory fallback applies.
-public enum BufferTail {
-    /// Longest edit the user may have made after Susurro's text.
-    static let maxUserEdit = 8
-    /// Shortest prefix of the remembered tail that counts as an anchor.
-    static let minAnchor = 4
-
-    public static func before(buffer: String, memoryTail: String) -> String? {
-        var buffer = Substring(buffer)
-        while let last = buffer.last, last.isNewline { buffer = buffer.dropLast() }
-        let tail = Array(memoryTail)
-        guard !tail.isEmpty, !buffer.isEmpty else { return nil }
-        let window = Array(buffer.suffix(tail.count + maxUserEdit))
-        let minLen = min(minAnchor, tail.count)
-        var length = tail.count
-        while length >= minLen {
-            let prefix = Array(tail[0..<length])
-            // Last occurrence of the prefix in the window.
-            if window.count >= length {
-                var start = window.count - length
-                while start >= 0 {
-                    if Array(window[start..<start + length]) == prefix {
-                        let edit = window[(start + length)...]
-                        if edit.count <= maxUserEdit, !edit.contains(where: \.isNewline) {
-                            return String(buffer)
-                        }
-                        break
-                    }
-                    start -= 1
-                }
-            }
-            length -= 1
-        }
-        return nil
     }
 }

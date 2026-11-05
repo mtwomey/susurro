@@ -689,7 +689,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let releaseApp = NSWorkspace.shared.frontmostApplication
         let releasePID = releaseApp?.processIdentifier
         let releaseBundleID = releaseApp?.bundleIdentifier
-        var fieldTask: Task<FieldRead?, Never>?
+        var fieldTask: Task<FieldSnapshot?, Never>?
         if smartSpacingEnabled, !IsSecureEventInputEnabled(), let pid = releasePID {
             fieldTask = Task.detached(priority: .userInitiated) { await FocusedFieldReader.read(pid: pid) }
         }
@@ -727,13 +727,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // the fallback, unknown = empty field. The AX read only counts if
                 // the same app is still frontmost. Field text is never logged.
                 let context: InsertContext
+                var provider = "off"
                 if self.smartSpacingEnabled {
                     let sameApp = frontmostPID != nil && frontmostPID == releasePID
-                    context = InsertContext.resolve(
-                        fieldRead: sameApp ? fieldRead : nil,
+                    let resolved = InsertContext.resolve(
+                        snapshot: sameApp ? fieldRead : nil,
                         memoryTail: frontmostPID.flatMap { self.dictationMemory.tailIfStillFocused(pid: $0) },
                         pid: frontmostPID, bundleID: releaseBundleID, engine: engine.kind,
                         secureInput: secureInputActive)
+                    context = resolved.0
+                    provider = resolved.1
                 } else {
                     context = InsertContext(before: nil, source: .none, pid: frontmostPID,
                                             engine: engine.kind, secureInput: secureInputActive)
@@ -742,7 +745,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                                        autoCapitalize: autoCapitalize)
                 var text = stage.apply(processed, context)
                 let readDetail = fieldRead?.detail ?? (pendingFieldRead == nil ? "notRead" : "timeout")
-                TextHandlingLog.record("source=\(context.source.rawValue) app=\(releaseBundleID ?? "?") known=\(context.before != nil) ax=\(readDetail) sameApp=\(frontmostPID == releasePID)")
+                TextHandlingLog.record("source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)")
                 guard !text.isEmpty else { return }
                 let typed = TextInjector.type(text)
                 if !secureInputActive, typed, let frontmostPID {
