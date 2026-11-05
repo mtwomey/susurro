@@ -30,10 +30,14 @@ public struct DictationMemory {
     /// Call after successfully typing `text` into the frontmost app (`pid`).
     /// `position` is where the insertion ended inside the field's value, when
     /// the value (but not the cursor) was readable — see `AnchoredValueProvider`.
-    public mutating func recordTyped(_ text: String, intoPID pid: pid_t, position: ValuePosition? = nil) {
+    /// `continuesTail`: false when the insertion point was unknown (the user
+    /// may have deleted or moved away from the old tail), so the old tail is
+    /// not glued in front of the new text.
+    public mutating func recordTyped(_ text: String, intoPID pid: pid_t, position: ValuePosition? = nil,
+                                     continuesTail: Bool = true) {
         // Same app: the new text continues the old tail (a very short
         // dictation like "ok" still needs to know what preceded it).
-        let combined = (last?.pid == pid ? last!.tail : "") + text
+        let combined = (continuesTail && last?.pid == pid ? last!.tail : "") + text
         last = (pid, String(combined.suffix(Self.contextLength)), position)
     }
 
@@ -72,6 +76,16 @@ public struct DictationMemory {
 /// Where an insertion ended inside a field's value (UTF-16 offsets), and how
 /// long the value was right after it.
 public struct ValuePosition: Sendable, Equatable {
+    /// Position after typing `typed` at the end of `before` (the text before
+    /// the cursor, read from `value`), having first deleted `deletedBackward`
+    /// characters with Backspace (a retracted full stop, BEA-677).
+    public static func afterInsertion(before: String, value: String, typed: String,
+                                      deletedBackward: Int = 0) -> ValuePosition {
+        let typedLength = (typed as NSString).length
+        return ValuePosition(caretOffset: max(0, (before as NSString).length - deletedBackward) + typedLength,
+                             valueLength: max(0, (value as NSString).length - deletedBackward) + typedLength)
+    }
+
     public var caretOffset: Int
     public var valueLength: Int
     public init(caretOffset: Int, valueLength: Int) {

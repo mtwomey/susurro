@@ -1122,11 +1122,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     var position: ValuePosition?
                     if context.source == .anchoredValue, let before = context.before,
                        let value = fieldRead?.value {
-                        let typedLength = (text as NSString).length
-                        position = ValuePosition(caretOffset: (before as NSString).length + typedLength,
-                                                 valueLength: (value as NSString).length + typedLength)
+                        position = ValuePosition.afterInsertion(before: before, value: value, typed: text,
+                                                                deletedBackward: deleteCount)
                     }
-                    self.dictationMemory.recordTyped(text, intoPID: frontmostPID, position: position)
+                    // Unknown context (source none): what preceded this insertion
+                    // is not known, so the remembered tail starts fresh instead of
+                    // gluing onto a tail the user may have deleted (BEA-677).
+                    self.dictationMemory.recordTyped(text, intoPID: frontmostPID, position: position,
+                                                     continuesTail: context.source != .none)
                     if !isHandsFree, let bounds = CrossDictationJoin.speechBounds(samples) {
                         let record = CrossDictationJoin.Previous(typed: text, pid: frontmostPID, fieldID: nil,
                                                                  endedAt: Date(), position: position)

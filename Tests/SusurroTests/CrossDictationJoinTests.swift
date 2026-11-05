@@ -106,6 +106,46 @@ struct CrossDictationJoinTests {
         #expect(CrossDictationJoin.speechBounds([Float](repeating: 0, count: 16_000)) == nil)
     }
 
+    // Board run 21:47Z: the dictation after a continuation was refused as
+    // "moved" because the recorded position ignored the retracted full stop.
+    @Test func positionAccountsForRetractedMark() {
+        let before = "Yesterday I went to the store."
+        let typed = " and bought bananas."
+        let p = ValuePosition.afterInsertion(before: before, value: before, typed: typed, deletedBackward: 1)
+        let field = "Yesterday I went to the store" + typed
+        #expect(p == ValuePosition(caretOffset: (field as NSString).length, valueLength: (field as NSString).length))
+        let v = CrossDictationJoin.check(
+            previous: .init(typed: typed, pid: 42, fieldID: nil, endedAt: t0, position: p),
+            current: .init(pid: 42, fieldID: nil, startedAt: t0.addingTimeInterval(2), before: field, after: "",
+                           position: .init(caretOffset: (field as NSString).length, valueLength: (field as NSString).length)))
+        if case .eligible = v {} else { Issue.record("expected eligible, got \(v)") }
+    }
+
+    // Board run 21:47:43-46Z: after the user deleted text, an insertion with
+    // unknown context glued its text onto the stale tail, so the next
+    // dictation could not anchor ("unreadable") and was capitalised.
+    @Test func unknownContextStartsAFreshTail() {
+        var m = DictationMemory()
+        m.recordTyped(" to go for a bike ride.", intoPID: 1)
+        m.recordTyped("Today I plan.", intoPID: 1, continuesTail: false)
+        #expect(m.tailIfStillFocused(pid: 1) == "Today I plan.")
+        var glued = DictationMemory()
+        glued.recordTyped(" to go for a bike ride.", intoPID: 1)
+        glued.recordTyped(" Today I plan.", intoPID: 1)
+        #expect(glued.tailIfStillFocused(pid: 1) != " Today I plan.")
+    }
+
+    @Test func freshTailAnchorsAtEndOfWarpBuffer() {
+        // After a fresh tail, the next dictation in a Warp-shaped buffer
+        // anchors at the end again, so the join guard can read the field.
+        let value = "$ x\nYesterday I went to the store and bought bananas. Today I plan."
+        let (c, p) = InsertContext.resolve(snapshot: FieldSnapshot(value: value, role: "AXTextArea"),
+                                           memoryTail: "Today I plan.", pid: 1, bundleID: nil,
+                                           engine: nil, secureInput: false)
+        #expect(p == "anchoredValue.end")
+        #expect(c.before?.hasSuffix("Today I plan.") == true)
+    }
+
     @Test func logLineHasNoText() {
         let v = CrossDictationJoin.Verdict.eligible(mark: ".", previousBody: "secret words")
         let line = CrossDictationJoin.logLine(verdict: v, gap: 3.25, decision: .continuation)
