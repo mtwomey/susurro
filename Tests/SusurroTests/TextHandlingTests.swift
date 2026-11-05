@@ -1,0 +1,119 @@
+import Foundation
+import Testing
+@testable import SusurroCore
+
+/// Fixtures for the three BEA-647 symptoms plus the empty-field policy.
+@Suite struct TextHandlingTests {
+    let stage = TextHandlingStage.standard(smartSpacing: true, autoCapitalize: true)
+
+    func ax(_ before: String?, after: String? = nil) -> InsertContext {
+        InsertContext.resolve(fieldRead: FieldRead(before: before, after: after),
+                              memoryTail: nil, pid: 42, bundleID: "com.example",
+                              engine: .parakeet, secureInput: false)
+    }
+
+    // MARK: symptom 1 — stray leading space in an empty field
+
+    @Test func emptyFieldAfterEnterToSendGetsNoLeadingSpace() {
+        // Memory still holds the last message's tail (same pid), but the AX
+        // read says the field is empty: Accessibility wins.
+        let ctx = InsertContext.resolve(fieldRead: FieldRead(before: "", after: ""),
+                                        memoryTail: "there.", pid: 42, bundleID: nil,
+                                        engine: .whisper, secureInput: false)
+        #expect(ctx.source == .accessibility)
+        #expect(stage.apply("Next message.", ctx) == "Next message.")
+    }
+
+    @Test func unknownContextIsTreatedAsEmptyField() {
+        #expect(stage.apply("hello there", .unknown) == "Hello there")
+        #expect(stage.apply(" hello", .unknown) == "Hello")
+    }
+
+    // MARK: symptom 2 — double space after a user-typed space
+
+    @Test func userTypedSpaceIsNotDoubled() {
+        #expect(stage.apply("We should go", ax("I think ")) == "we should go")
+        #expect(stage.apply("we should go", ax("I think\t")) == "we should go")
+    }
+
+    @Test func cleanupLeadingWhitespaceIsDropped() {
+        #expect(stage.apply("  we should go", ax("I think ")) == "we should go")
+        #expect(stage.apply("  we should go", ax("I think")) == " we should go")
+    }
+
+    // MARK: symptom 3 — capital letter on a continuation
+
+    @Test func continuationIsLowerCased() {
+        #expect(stage.apply("We should go", ax("I think")) == " we should go")
+        #expect(stage.apply("We should go", ax("Well,")) == " we should go")
+    }
+
+    @Test func continuationKeepsPronounIAndInternalCapitals() {
+        #expect(stage.apply("I agree", ax("and so")) == " I agree")
+        #expect(stage.apply("I'm in", ax("and so")) == " I'm in")
+        #expect(stage.apply("iOS is fine", ax("and")) == " iOS is fine")
+        #expect(stage.apply("NASA called", ax("and")) == " NASA called")
+        #expect(stage.apply("McDonald said", ax("and")) == " McDonald said")
+    }
+
+    @Test func afterSentenceEndCapitalises() {
+        #expect(stage.apply("we should go", ax("Done.")) == " We should go")
+        #expect(stage.apply("we should go", ax("Really? ")) == "We should go")
+        #expect(stage.apply("we should go", ax("He said \"stop.\"")) == " We should go")
+        #expect(stage.apply("we should go", ax("Line one\n")) == "We should go")
+    }
+
+    // MARK: leading-space rules
+
+    @Test func noSpaceAfterOpenersOrBeforeAttachedPunctuation() {
+        #expect(stage.apply("see above", ax("note (")) == "see above")
+        #expect(stage.apply("hello", ax("she said \"")) == "hello")
+        #expect(stage.apply("hello", ax("she said \"hi\"")) == " hello")
+        #expect(stage.apply(", and more", ax("this")) == ", and more")
+    }
+
+    // MARK: context resolution
+
+    @Test func memoryIsFallbackWhenAccessibilityUnreadable() {
+        let ctx = InsertContext.resolve(fieldRead: FieldRead(before: nil), memoryTail: "go",
+                                        pid: 1, bundleID: nil, engine: nil, secureInput: false)
+        #expect(ctx.source == .selfTracked)
+        #expect(stage.apply("And then", ctx) == " and then")
+        let none = InsertContext.resolve(fieldRead: nil, memoryTail: nil,
+                                         pid: 1, bundleID: nil, engine: nil, secureInput: false)
+        #expect(none.source == .none)
+        #expect(none.before == nil)
+    }
+
+    @Test func secureFieldYieldsNoContext() {
+        let a = InsertContext.resolve(fieldRead: .secureField, memoryTail: "x",
+                                      pid: 1, bundleID: nil, engine: nil, secureInput: false)
+        let b = InsertContext.resolve(fieldRead: FieldRead(before: "abc"), memoryTail: "x",
+                                      pid: 1, bundleID: nil, engine: nil, secureInput: true)
+        #expect(a.secureInput && a.before == nil && a.source == .none)
+        #expect(b.secureInput && b.before == nil && b.source == .none)
+    }
+
+    // MARK: toggles
+
+    @Test func smartSpacingOffLeavesSpacingAndContinuationAlone() {
+        let s = TextHandlingStage.standard(smartSpacing: false, autoCapitalize: true)
+        #expect(s.apply("We should go", ax("I think")) == "We should go")
+        #expect(s.apply("hello", .unknown) == "Hello")
+    }
+
+    @Test func autoCapitalizeOffNeverUpperCases() {
+        let s = TextHandlingStage.standard(smartSpacing: true, autoCapitalize: false)
+        #expect(s.apply("hello", .unknown) == "hello")
+        #expect(s.apply("Hello", ax("so")) == " hello")
+    }
+
+    @Test func postProcessorCanDeferSentenceCase() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("th-rules-\(UUID().uuidString).json")
+        let p = PostProcessor(userRulesURL: url)
+        #expect(p.process("hello there", applySentenceCase: false).first == "h")
+        #expect(p.process("hello there").first == "H")
+        #expect(p.autoCapitalizeEnabled)
+    }
+}

@@ -18,9 +18,10 @@ import Foundation
 /// (or switches to a different window in the *same* app) between
 /// dictations.
 public struct DictationMemory {
-    // SpacingRule only ever looks at the single character immediately
-    // before the cursor.
-    private static let contextLength = 1
+    // The text-handling stage looks at the last few characters (whitespace,
+    // closing quotes, sentence-ending punctuation) before the cursor.
+    // Kept short: this is the fallback when Accessibility can't read the field.
+    private static let contextLength = 16
 
     private var last: (pid: pid_t, tail: String)?
 
@@ -28,7 +29,10 @@ public struct DictationMemory {
 
     /// Call after successfully typing `text` into the frontmost app (`pid`).
     public mutating func recordTyped(_ text: String, intoPID pid: pid_t) {
-        last = (pid, String(text.suffix(Self.contextLength)))
+        // Same app: the new text continues the old tail (a very short
+        // dictation like "ok" still needs to know what preceded it).
+        let combined = (last?.pid == pid ? last!.tail : "") + text
+        last = (pid, String(combined.suffix(Self.contextLength)))
     }
 
     /// Call when nothing was actually typed (e.g. a secure field silently

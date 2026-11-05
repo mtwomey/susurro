@@ -10,7 +10,7 @@ import Testing
     @Test func recordedTailReturnedForSamePID() {
         var memory = DictationMemory()
         memory.recordTyped("Hello there.", intoPID: 123)
-        #expect(memory.tailIfStillFocused(pid: 123) == ".")
+        #expect(memory.tailIfStillFocused(pid: 123) == "Hello there.")
     }
 
     @Test func recordedTailHiddenForDifferentPID() {
@@ -37,6 +37,13 @@ import Testing
         memory.recordTyped("First one.", intoPID: 1)
         memory.recordTyped("Second one", intoPID: 2)
         #expect(memory.tailIfStillFocused(pid: 1) == nil)
-        #expect(memory.tailIfStillFocused(pid: 2) == "e")
+        #expect(memory.tailIfStillFocused(pid: 2) == "Second one")
+    }
+
+    @Test func tailIsCappedAndContinuesAcrossDictationsInSameApp() {
+        var memory = DictationMemory()
+        memory.recordTyped("This is a fairly long sentence.", intoPID: 7)
+        memory.recordTyped(" ok", intoPID: 7)
+        #expect(memory.tailIfStillFocused(pid: 7) == "y long sentence. ok".suffix(16).description)
     }
 }

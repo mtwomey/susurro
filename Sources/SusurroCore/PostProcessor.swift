@@ -87,7 +87,14 @@ public final class PostProcessor: @unchecked Sendable {
         return nil
     }
 
-    public func process(_ text: String) -> String {
+    /// `applySentenceCase: false` leaves step 7 to the pre-insert
+    /// `TextHandlingStage` (BEA-648), which can see the field context.
+    /// rules.json `options.autoCapitalize`, for configuring `SentenceCase`.
+    public var autoCapitalizeEnabled: Bool {
+        loadRules()?.options.autoCapitalize ?? true
+    }
+
+    public func process(_ text: String, applySentenceCase: Bool = true) -> String {
         guard let rules = loadRules() else { return text }
         var result = text
 
@@ -172,7 +179,7 @@ public final class PostProcessor: @unchecked Sendable {
         }
 
         // 7. Capitalize a sentence-start-like string
-        if rules.options.autoCapitalize, let first = result.first, first.isLowercase {
+        if applySentenceCase, rules.options.autoCapitalize, let first = result.first, first.isLowercase {
             result = first.uppercased() + result.dropFirst()
         }
 
