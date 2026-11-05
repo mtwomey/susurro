@@ -113,6 +113,36 @@ public enum CrossDictationJoin {
         }
     }
 
+    /// Decide the join from the joint transcript, matching on the previous
+    /// dictation's last words (its final mark removed).
+    public static func decide(previous: Previous, jointText: String) -> HandsFreeJoin.Decision {
+        let body = HeldMarkJoiner.lastWords(HandsFreeJoin.holdMark(previous.typed).body)
+        return HandsFreeJoin.decide(previousBody: body, jointText: jointText)
+    }
+
+    /// Quick pre-check before spending a joint transcription: only the
+    /// facts known without reading the field (app, gap, a single ".").
+    public static func worthDeciding(previous: Previous?, pid: pid_t?, startedAt: Date,
+                                     maxGap: TimeInterval = defaultMaxGap) -> Bool {
+        guard let previous, let pid, previous.pid == pid else { return false }
+        let gap = startedAt.timeIntervalSince(previous.endedAt)
+        guard gap >= 0, gap <= maxGap else { return false }
+        return HandsFreeJoin.holdMark(previous.typed).mark == "." && previous.typed.last == "."
+    }
+
+    /// First speech start / last speech end (sample indices) of a whole
+    /// clip, using the hands-free segmenter's speech detector.
+    public static func speechBounds(_ samples: [Float]) -> (first: Int, last: Int)? {
+        var config = PauseSegmenter.Config()
+        config.minPause = 1e9
+        config.maxSegment = 1e9
+        var segmenter = PauseSegmenter(config: config)
+        _ = segmenter.append(samples)
+        guard let cut = segmenter.finish(totalSamples: samples.count),
+              let first = cut.firstSpeech, let last = cut.lastSpeech, last > first else { return nil }
+        return (first, last)
+    }
+
     /// One text-handling.log line: numbers and decision only, no text.
     public static func logLine(verdict: Verdict, gap: TimeInterval?, decision: HandsFreeJoin.Decision?) -> String {
         let g = gap.map { String(format: "%.1f", $0) } ?? "-"

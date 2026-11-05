@@ -65,6 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // decided from a joint transcript across the pause when the next chunk lands.
     private var hfJoiner = HeldMarkJoiner()
     private var hfPrevChunk: HFChunk?       // audio of the chunk whose mark is held
+    /// Cross-dictation joins (BEA-677): the previous push-to-talk insertion
+    /// and its audio, kept so the next dictation can decide its full stop.
+    private var xPrev: (record: CrossDictationJoin.Previous, samples: [Float], lastSpeech: Int)?
     private var now: Double { ProcessInfo.processInfo.systemUptime }
     private var engine: (any TranscriptionEngine)?
     // Bumped on every loadEngine() call; a load that finishes after a newer
@@ -838,6 +841,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     break
                 }
             }
+            // Cross-dictation join (BEA-677): a separate dictation right after
+            // Susurro's previous one. Decide the previous full stop from a
+            // joint clip now; the field guards run before insertion.
+            let startedAt = Date().addingTimeInterval(-Double(samples.count) / 16_000)
+            var xDecision: HandsFreeJoin.Decision?
+            if hfChunk == nil, !processed.isEmpty {
+                let prev = await MainActor.run { [weak self] in self?.xPrev }
+                if let prev, CrossDictationJoin.worthDeciding(previous: prev.record, pid: releasePID, startedAt: startedAt),
+                   let bounds = CrossDictationJoin.speechBounds(samples) {
+                    let clip = HandsFreeJoin.jointClip(a: prev.samples, aLastSpeechEnd: prev.lastSpeech,
+                                                       b: samples, bFirstSpeechStart: bounds.first)
+                    let joinStart = clock.now
+                    let jointRaw = (try? engine.transcribe(samples: clip)) ?? ""
+                    timings.joinTranscribe = clock.now - joinStart
+                    let joint = postProcessor.process(TranscriptFilter.stripHallucinations(jointRaw, engine: engine.kind),
+                                                      applySentenceCase: false)
+                    xDecision = CrossDictationJoin.decide(previous: prev.record, jointText: joint)
+                }
+            }
+            let crossDecision = xDecision
             let joinText = joinedText
             let joinAfter = heldBody
             let prevShown = heldShown, prevMark = heldMark, decision = joinDecision
@@ -917,10 +940,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     // at the wrong spot).
                     if HandsFreeJoin.isInPlace(before: context.before, previousBody: joinAfter) { text = joinText } else { slog("handsfree: cursor moved, join skipped") }
                 }
+                var xLog = ""
+                if !isHandsFree, joinText == nil, let frontmostPID, let prev = self.xPrev {
+                    var position: ValuePosition?
+                    if context.source == .anchoredValue, let before = context.before, let value = fieldRead?.value {
+                        position = ValuePosition(caretOffset: (before as NSString).length,
+                                                 valueLength: (value as NSString).length)
+                    }
+                    let current = CrossDictationJoin.Current(pid: frontmostPID, fieldID: nil, startedAt: startedAt,
+                                                             before: readableField ? context.before : nil,
+                                                             after: context.after, position: position)
+                    let verdict = CrossDictationJoin.check(previous: prev.record, current: current)
+                    if case .eligible = verdict, let crossDecision, !text.isEmpty {
+                        let edit = CrossDictationJoin.edit(decision: crossDecision, next: text)
+                        deleteCount = edit.deleteBackward
+                        text = edit.text
+                    }
+                    xLog = " " + CrossDictationJoin.logLine(verdict: verdict,
+                                                            gap: startedAt.timeIntervalSince(prev.record.endedAt),
+                                                            decision: crossDecision)
+                }
                 let readDetail = fieldRead?.detail ?? (pendingFieldRead == nil ? "notRead" : "timeout")
                 // Logged once per dictation, after insertion, with per-stage
                 // timings (BEA-663, F8). Numbers only — never field text.
-                let logLine = "source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)"
+                let logLine = "source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)\(xLog)"
                 var lineTimings = stageTimings
                 // Show this piece's own end mark now if the field is readable;
                 // otherwise it stays held (typed at the next join or at stop).
@@ -954,7 +997,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                                  valueLength: (value as NSString).length + typedLength)
                     }
                     self.dictationMemory.recordTyped(text, intoPID: frontmostPID, position: position)
+                    if !isHandsFree, let bounds = CrossDictationJoin.speechBounds(samples) {
+                        let record = CrossDictationJoin.Previous(typed: text, pid: frontmostPID, fieldID: nil,
+                                                                 endedAt: Date(), position: position)
+                        self.xPrev = (record, samples, bounds.last)
+                    } else {
+                        self.xPrev = nil
+                    }
                 } else {
+                    self.xPrev = nil
                     // Nothing was actually typed (secure input blocked it, a
                     // keystroke event failed to post, or we couldn't identify
                     // the frontmost app) — don't let a stale tail leak into

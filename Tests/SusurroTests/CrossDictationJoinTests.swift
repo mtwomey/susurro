@@ -85,6 +85,27 @@ struct CrossDictationJoinTests {
         #expect(d2 == .sentenceBreak)
     }
 
+    @Test func worthDecidingPrecheck() {
+        #expect(CrossDictationJoin.worthDeciding(previous: prev(), pid: 42, startedAt: t0.addingTimeInterval(5)))
+        #expect(!CrossDictationJoin.worthDeciding(previous: prev(), pid: 7, startedAt: t0.addingTimeInterval(5)))
+        #expect(!CrossDictationJoin.worthDeciding(previous: prev(), pid: 42, startedAt: t0.addingTimeInterval(60)))
+        #expect(!CrossDictationJoin.worthDeciding(previous: prev("Really?"), pid: 42, startedAt: t0.addingTimeInterval(5)))
+        #expect(!CrossDictationJoin.worthDeciding(previous: nil, pid: 42, startedAt: t0))
+    }
+
+    @Test func speechBoundsOfAWholeClip() {
+        // 1 s silence, 1 s tone, 1 s silence at 16 kHz.
+        var samples = [Float](repeating: 0.0005, count: 48_000)
+        for i in 16_000..<32_000 { samples[i] = 0.2 * sin(Float(i) * 0.1) }
+        let b = CrossDictationJoin.speechBounds(samples)
+        #expect(b != nil)
+        if let b {
+            #expect(abs(b.first - 16_000) <= 640)
+            #expect(abs(b.last - 32_000) <= 640)
+        }
+        #expect(CrossDictationJoin.speechBounds([Float](repeating: 0, count: 16_000)) == nil)
+    }
+
     @Test func logLineHasNoText() {
         let v = CrossDictationJoin.Verdict.eligible(mark: ".", previousBody: "secret words")
         let line = CrossDictationJoin.logLine(verdict: v, gap: 3.25, decision: .continuation)
