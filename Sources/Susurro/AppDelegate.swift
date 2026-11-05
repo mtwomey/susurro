@@ -93,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var micAccessDenied = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installDevFeedHook()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
             button.image = NSImage(
@@ -747,6 +748,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let releaseApp = NSWorkspace.shared.frontmostApplication
         transcribeAndInsert(samples, releasePID: releaseApp?.processIdentifier,
                             releaseBundleID: releaseApp?.bundleIdentifier, expectedPID: nil)
+    }
+
+    /// Dev hook (BEA-677): feed a WAV into the running app instead of the
+    /// microphone, as if it were one push-to-talk dictation into the
+    /// frontmost app. Off unless `defaults write <bundle id> DevFeedHook -bool YES`.
+    ///   scripts/feed_wav.sh clip.wav   (posts com.susurro.dev.feedWAV, object = "<bundle id>|<path>")
+    private func installDevFeedHook() {
+        guard UserDefaults.standard.bool(forKey: "DevFeedHook") else { return }
+        slog("dev: feed-WAV hook enabled")
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.susurro.dev.feedWAV"), object: nil, queue: .main
+        ) { [weak self] note in
+            // object = "<expected frontmost bundle id>|<wav path>". The clip is
+            // only typed when that app is frontmost: a dev run must never
+            // type into whatever the user happens to be using.
+            guard let payload = note.object as? String, let bar = payload.firstIndex(of: "|") else { return }
+            let expected = String(payload[..<bar]), path = String(payload[payload.index(after: bar)...])
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let app = NSWorkspace.shared.frontmostApplication
+                guard !expected.isEmpty, app?.bundleIdentifier == expected else {
+                    slog("dev: feed WAV refused — frontmost app is not the expected target")
+                    return
+                }
+                do {
+                    let samples = try AudioFileLoader.loadSamples(url: URL(fileURLWithPath: path))
+                    slog("dev: feeding WAV (\(samples.count) samples)")
+                    self.transcribeAndInsert(samples, releasePID: app?.processIdentifier,
+                                             releaseBundleID: app?.bundleIdentifier, expectedPID: nil)
+                } catch {
+                    slog("dev: feed WAV failed: \(error)")
+                }
+            }
+        }
     }
 
     /// Transcribe `samples` and insert the result into the focused field.
