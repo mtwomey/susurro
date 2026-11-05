@@ -93,8 +93,11 @@ final class HelpWindowController {
         Off by default. When checked, Susurro looks at the text just before \
         the cursor so new words fit in: one space between sentences, never \
         a stray leading or double space, and lower-case when you're \
-        continuing a sentence. Password fields are never read, and field \
-        text is never stored or logged. Where a field can't be read, \
+        continuing a sentence. If you dictate again within a few seconds \
+        and Susurro's last words are still untouched at the cursor, it \
+        checks whether you were only pausing mid-sentence; if so it removes \
+        its own full stop and carries on in lower case. Password fields are \
+        never read, and field text is never stored or logged. Where a field can't be read, \
         Susurro falls back to remembering what it last typed.
         """)
 
