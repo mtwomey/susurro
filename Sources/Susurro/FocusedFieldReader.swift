@@ -50,7 +50,11 @@ enum FocusedFieldReader {
         let value: String? = copy(focused, kAXValueAttribute)
         let selection = selectedRange(focused).map { NSRange(location: $0.location, length: $0.length) }
         let markerBefore = selection == nil ? textBeforeSelectionViaMarkers(focused) : nil
-        return FieldSnapshot(value: value, selection: selection, markerBefore: markerBefore, role: role).sanitized
+        var placeholders: [String] = []
+        if let axPlaceholder: String = copy(focused, kAXPlaceholderValueAttribute) { placeholders.append(axPlaceholder) }
+        if let value, !value.isEmpty { placeholders += generatedText(focused, valueLength: (value as NSString).length) }
+        return FieldSnapshot(value: value, selection: selection, markerBefore: markerBefore, role: role,
+                             placeholders: placeholders).sanitized
     }
 
     private static func enableManualAccessibilityOnce(app: AXUIElement, pid: pid_t) {
@@ -62,6 +66,47 @@ enum FocusedFieldReader {
         // their AX tree in response. Not AXEnhancedUserInterface: that one
         // disturbs window animations and window managers.
         AXUIElementSetAttributeValue(app, manualAccessibility as CFString, kCFBooleanTrue)
+    }
+
+    /// CSS-generated text inside an editable web field (BEA-673): Chromium
+    /// exposes `::before { content: attr(data-placeholder) }` placeholders —
+    /// the pattern used by Quill, ProseMirror/Tiptap, Lexical-style editors
+    /// and the Hermes desktop composer — as part of the field's `AXValue`,
+    /// with no `AXPlaceholderValue`. Text that really is in the field lists
+    /// `AXEditableAncestor` among its attribute names; generated text does
+    /// not (verified in Chrome and in an Electron app). Returns the generated
+    /// leaves (each, and joined) so `FieldSnapshot.sanitized` can recognise a
+    /// value that is nothing but them. Only for web fields with short values
+    /// (placeholders are short), and bounded to a few nodes.
+    private static func generatedText(_ field: AXUIElement, valueLength: Int) -> [String] {
+        guard valueLength <= 256, attributeNames(field).contains("AXEditableAncestor") else { return [] }
+        var generated: [String] = []
+        var queue: [(AXUIElement, Int)] = [(field, 0)]
+        var visited = 0
+        while !queue.isEmpty, visited < 24 {
+            let (element, depth) = queue.removeFirst()
+            visited += 1
+            guard depth < 4, let children: [AXUIElement] = copy(element, kAXChildrenAttribute) else { continue }
+            for child in children.prefix(8) {
+                AXUIElementSetMessagingTimeout(child, 0.05)
+                if (copy(child, kAXRoleAttribute) as String?) == (kAXStaticTextRole as String) {
+                    if !attributeNames(child).contains("AXEditableAncestor"),
+                       let text: String = copy(child, kAXValueAttribute), !text.isEmpty {
+                        generated.append(text)
+                    }
+                } else {
+                    queue.append((child, depth + 1))
+                }
+            }
+        }
+        if generated.count > 1 { generated.append(generated.joined()) }
+        return generated
+    }
+
+    private static func attributeNames(_ element: AXUIElement) -> Set<String> {
+        var names: CFArray?
+        guard AXUIElementCopyAttributeNames(element, &names) == .success else { return [] }
+        return Set((names as? [String]) ?? [])
     }
 
     private static func copy<T>(_ element: AXUIElement, _ attribute: String) -> T? {

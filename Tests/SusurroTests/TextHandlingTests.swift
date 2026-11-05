@@ -163,7 +163,7 @@ import Testing
         let ok = FieldSnapshot(value: "draft text", markerBefore: "draft")
         #expect(resolve(ok, memory: nil).1 == "textMarkers")
         let doc = FieldSnapshot(value: "draft text", markerBefore: "Page title draft")
-        #expect(resolve(doc, memory: "xyz").1 == "memory")
+        #expect(resolve(doc, memory: "xyz").1 == "none")
     }
 
     // Anchored value: terminals (cursor at the end)
@@ -187,28 +187,43 @@ import Testing
 
     // Anchored value: editors (cursor mid-buffer, e.g. Emacs)
 
+    func positioned(_ tail: String, endingAt before: String, in value: String) -> RememberedInsertion {
+        RememberedInsertion(tail: tail, position: ValuePosition(caretOffset: (before as NSString).length,
+                                                                valueLength: (value as NSString).length))
+    }
+
     @Test func editorCursorMidBuffer() {
-        let text = ";; notes\nFirst line I said\n\nlater paragraph.\n"
-        let (c, p) = resolve(buffer(text), memory: "line I said")
+        let before = ";; notes\nFirst line I said"
+        let text = before + "\n\nlater paragraph.\n"
+        let (c, p) = InsertContext.resolve(snapshot: buffer(text), memory: positioned("line I said", endingAt: before, in: text),
+                                           pid: 1, bundleID: nil, engine: nil, secureInput: false)
         #expect(p == "anchoredValue.interior")
         #expect(c.before?.hasSuffix("First line I said") == true)
         #expect(stage.apply("And more", c) == " and more")
     }
 
     @Test func editorDeletedCharacterMidBuffer() {
+        let original = "Intro.\nWe agreed on it.\nTail text.\n"
         let text = "Intro.\nWe agreed on it\nTail text.\n"
-        let (c, p) = resolve(buffer(text), memory: "agreed on it.")
+        let (c, p) = InsertContext.resolve(snapshot: buffer(text),
+                                           memory: positioned("agreed on it.", endingAt: "Intro.\nWe agreed on it.", in: original),
+                                           pid: 1, bundleID: nil, engine: nil, secureInput: false)
         #expect(p == "anchoredValue.interior")
         #expect(c.before?.hasSuffix("agreed on it") == true)
     }
 
-    @Test func ambiguousAnchorFallsBackToMemory() {
-        let text = "ok thanks\nok thanks\nmore"
-        #expect(resolve(buffer(text), memory: "ok thanks").1 == "memory")
+    @Test func midBufferWithoutRememberedPositionIsUnknown() {
+        let text = ";; notes\nFirst line I said\n\nlater paragraph.\n"
+        #expect(resolve(buffer(text), memory: "line I said").1 == "none")
     }
 
-    @Test func noAnchorFallsBackToMemory() {
-        #expect(resolve(buffer("lots of new output scrolled in"), memory: "Hello there.").1 == "memory")
+    @Test func ambiguousAnchorWithReadableValueIsUnknown() {
+        let text = "ok thanks\nok thanks\nmore"
+        #expect(resolve(buffer(text), memory: "ok thanks").1 == "none")
+    }
+
+    @Test func noAnchorWithReadableValueIsUnknown() {
+        #expect(resolve(buffer("lots of new output scrolled in"), memory: "Hello there.").1 == "none")
     }
 
     @Test func noMemoryMeansNoAnchor() {
@@ -250,7 +265,7 @@ import Testing
 
     @Test func repeatedPhraseWithoutPositionDoesNotGuess() {
         let text = "we left.\nx\nwe left.\ny"
-        #expect(resolve(buffer(text), memory: "we left.").1 == "memory")
+        #expect(resolve(buffer(text), memory: "we left.").1 == "none")
     }
 
     @Test func spaceTypedAfterAnchorMidBufferIsSeen() {

@@ -37,10 +37,16 @@ public struct FieldSnapshot: Sendable, Equatable {
     /// bridge (per-app, last resort — e.g. the Emacs server), and its name.
     public var appBefore: String?
     public var appBridge: String?
+    /// Placeholder strings the field may echo as its value when empty:
+    /// `kAXPlaceholderValueAttribute`, plus CSS-generated text the reader
+    /// found inside an editable web field (BEA-673). Never logged.
+    public var placeholders: [String]
 
     public init(value: String? = nil, selection: NSRange? = nil, markerBefore: String? = nil,
                 role: String? = nil, secure: Bool = false,
-                appBefore: String? = nil, appBridge: String? = nil) {
+                appBefore: String? = nil, appBridge: String? = nil,
+                placeholders: [String] = []) {
+        self.placeholders = placeholders
         self.value = value
         self.selection = selection
         self.markerBefore = markerBefore
@@ -58,7 +64,20 @@ public struct FieldSnapshot: Sendable, Equatable {
     /// against it) is dropped, so the memory fallback applies instead of
     /// anchoring inside garbage.
     public var sanitized: FieldSnapshot {
-        guard let value, value.contains("\u{0}") else { return self }
+        guard let value else { return self }
+        if !value.contains("\u{0}") {
+            guard FieldSnapshot.looksEmpty(value, placeholders: placeholders) else { return self }
+            // An empty-looking field (BEA-673): only newlines / zero-width
+            // scaffolding, or an echo of its own placeholder. Treat it as
+            // truly empty so no leading space is added; the marker prefix
+            // would echo the same placeholder, so it is dropped too.
+            var copy = self
+            copy.value = ""
+            copy.selection = NSRange(location: 0, length: 0)
+            copy.markerBefore = nil
+            copy.emptyEcho = true
+            return copy
+        }
         var copy = self
         copy.value = nil
         copy.selection = nil
@@ -69,6 +88,31 @@ public struct FieldSnapshot: Sendable, Equatable {
 
     /// Set by `sanitized` when the value was dropped.
     public var corruptValue = false
+    /// Set by `sanitized` when a non-empty value was recognised as an empty
+    /// field (placeholder echo or newline/zero-width scaffolding).
+    public var emptyEcho = false
+
+    /// Characters editors leave in an empty field that are not text.
+    static let scaffolding: Set<Unicode.Scalar> = ["\u{200B}", "\u{200C}", "\u{200D}", "\u{2060}", "\u{FEFF}"]
+
+    /// The value with zero-width scaffolding removed and surrounding line
+    /// breaks trimmed (a cleared contenteditable keeps a `<br>`).
+    static func visibleBody(_ value: String) -> String {
+        var scalars = String.UnicodeScalarView()
+        scalars.append(contentsOf: value.unicodeScalars.filter { !scaffolding.contains($0) })
+        return String(scalars).trimmingCharacters(in: .newlines)
+    }
+
+    /// True when `value` is what an empty field reports: nothing but line
+    /// breaks / zero-width characters, or exactly one of its placeholders
+    /// (Chromium exposes CSS `::before { content: attr(data-placeholder) }`
+    /// as the value of an empty contenteditable — BEA-673).
+    public static func looksEmpty(_ value: String, placeholders: [String]) -> Bool {
+        if value.isEmpty { return false } // already empty; nothing to rewrite
+        let body = visibleBody(value)
+        if body.isEmpty { return true }
+        return placeholders.contains { !$0.isEmpty && visibleBody($0) == body }
+    }
     /// Nothing focused, or the read timed out.
     public static let nothing = FieldSnapshot()
 
@@ -80,6 +124,7 @@ public struct FieldSnapshot: Sendable, Equatable {
         if let selection { parts.append("caret=\(selection.location)") }
         if let markerBefore { parts.append("markerLen=\(markerBefore.count)") }
         if corruptValue { parts.append("corruptValue") }
+        if emptyEcho { parts.append("emptyEcho") }
         if let appBefore { parts.append("bridge=\(appBridge ?? "?") len=\(appBefore.count)") }
         return parts.joined(separator: " ")
     }
@@ -209,7 +254,9 @@ public struct AnchoredValueProvider: ContextProvider {
         return nil
     }
 
-    /// Cursor mid-buffer. The anchor is the longest prefix of the remembered
+    /// Cursor mid-buffer (editors without a caret). Requires a remembered
+    /// insertion position whose value length still matches (see the guard
+    /// below). The anchor is the longest prefix of the remembered
     /// text found in the value. Several matches (the same phrase dictated
     /// twice) are resolved by the remembered insertion position: the match
     /// nearest to it wins, if it is clearly nearest; otherwise no answer.
@@ -243,15 +290,21 @@ public struct AnchoredValueProvider: ContextProvider {
                 end = sorted[0]
                 how = ".interior.nearest"
             }
-            if let remembered = memory.position?.valueLength {
-                // Characters the user deleted from the end of Susurro's text
-                // (a full stop) are already missing from the anchor.
-                let deleted = (memory.tail as NSString).length - (prefix as NSString).length
-                let grown = ns.length - (remembered - deleted)
-                if grown > 0, grown <= maxUserEdit, end + grown <= ns.length {
-                    let typed = ns.substring(with: NSRange(location: end, length: grown))
-                    if typed.allSatisfy(\.isWhitespace) { end += grown }
-                }
+            // Mid-buffer is only trusted when Susurro recorded where its last
+            // insertion ended and the buffer has since changed by no more than
+            // a few typed characters (BEA-673, Warp): otherwise the anchor is
+            // an old copy of the text — a command already run and now in the
+            // history, or a line the user cleared — and the cursor is
+            // somewhere else.
+            guard let remembered = memory.position?.valueLength else { return nil }
+            // Characters the user deleted from the end of Susurro's text
+            // (a full stop) are already missing from the anchor.
+            let deleted = (memory.tail as NSString).length - (prefix as NSString).length
+            let grown = ns.length - (remembered - deleted)
+            guard grown >= 0, grown <= maxUserEdit else { return nil }
+            if grown > 0, end + grown <= ns.length {
+                let typed = ns.substring(with: NSRange(location: end, length: grown))
+                if typed.allSatisfy(\.isWhitespace) { end += grown }
             }
             return (ns.substring(to: end), ns.substring(from: end), how)
         }
@@ -259,12 +312,18 @@ public struct AnchoredValueProvider: ContextProvider {
     }
 }
 
-/// Last resort: what Susurro itself last typed into this same app.
+/// Last resort: what Susurro itself last typed into this same app — only
+/// when the app exposes no readable value. When a value is readable and the
+/// anchored-value provider could not place the cursor after Susurro's text,
+/// the value is evidence the memory is stale (the user cleared the line, ran
+/// the command, or new output arrived — BEA-673, Warp), so the memory is not
+/// trusted and the empty-field policy applies (no space, capitalise).
 public struct MemoryProvider: ContextProvider {
     public let name = "memory"
     public init() {}
     public func context(_ s: FieldSnapshot, memory: RememberedInsertion?) -> ProvidedContext? {
         guard let memory else { return nil }
+        if let value = s.value, !value.isEmpty { return nil }
         return ProvidedContext(before: memory.tail, after: nil, source: .selfTracked, provider: name)
     }
 }
