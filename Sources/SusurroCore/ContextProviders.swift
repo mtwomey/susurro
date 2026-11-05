@@ -38,8 +38,8 @@ public struct FieldSnapshot: Sendable, Equatable {
     public var appBefore: String?
     public var appBridge: String?
     /// Placeholder strings the field may echo as its value when empty:
-    /// `kAXPlaceholderValueAttribute`, plus any CSS-generated placeholders
-    /// declared in `GeneratedPlaceholders` (BEA-673). Never logged.
+    /// `kAXPlaceholderValueAttribute`, plus CSS-generated text the reader
+    /// found inside an editable web field (BEA-673). Never logged.
     public var placeholders: [String]
 
     public init(value: String? = nil, selection: NSRange? = nil, markerBefore: String? = nil,
