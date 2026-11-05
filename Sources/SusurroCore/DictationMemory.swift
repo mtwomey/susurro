@@ -18,17 +18,29 @@ import Foundation
 /// (or switches to a different window in the *same* app) between
 /// dictations.
 public struct DictationMemory {
-    // SpacingRule only ever looks at the single character immediately
-    // before the cursor.
-    private static let contextLength = 1
+    // The text-handling stage looks at the last few characters (whitespace,
+    // closing quotes, sentence-ending punctuation) before the cursor.
+    // Kept short: this is the fallback when Accessibility can't read the field.
+    private static let contextLength = 16
 
-    private var last: (pid: pid_t, tail: String)?
+    private var last: (pid: pid_t, tail: String, position: ValuePosition?)?
 
     public init() {}
 
     /// Call after successfully typing `text` into the frontmost app (`pid`).
-    public mutating func recordTyped(_ text: String, intoPID pid: pid_t) {
-        last = (pid, String(text.suffix(Self.contextLength)))
+    /// `position` is where the insertion ended inside the field's value, when
+    /// the value (but not the cursor) was readable — see `AnchoredValueProvider`.
+    public mutating func recordTyped(_ text: String, intoPID pid: pid_t, position: ValuePosition? = nil) {
+        // Same app: the new text continues the old tail (a very short
+        // dictation like "ok" still needs to know what preceded it).
+        let combined = (last?.pid == pid ? last!.tail : "") + text
+        last = (pid, String(combined.suffix(Self.contextLength)), position)
+    }
+
+    /// What Susurro last typed into this app, plus where, if known.
+    public func insertionIfStillFocused(pid: pid_t) -> RememberedInsertion? {
+        guard let last, last.pid == pid else { return nil }
+        return RememberedInsertion(tail: last.tail, position: last.position)
     }
 
     /// Call when nothing was actually typed (e.g. a secure field silently
@@ -44,5 +56,26 @@ public struct DictationMemory {
     public func tailIfStillFocused(pid: pid_t) -> String? {
         guard let last, last.pid == pid else { return nil }
         return last.tail
+    }
+}
+
+/// Where an insertion ended inside a field's value (UTF-16 offsets), and how
+/// long the value was right after it.
+public struct ValuePosition: Sendable, Equatable {
+    public var caretOffset: Int
+    public var valueLength: Int
+    public init(caretOffset: Int, valueLength: Int) {
+        self.caretOffset = caretOffset
+        self.valueLength = valueLength
+    }
+}
+
+/// Susurro's memory of its last insertion into the focused app.
+public struct RememberedInsertion: Sendable, Equatable {
+    public var tail: String
+    public var position: ValuePosition?
+    public init(tail: String, position: ValuePosition? = nil) {
+        self.tail = tail
+        self.position = position
     }
 }

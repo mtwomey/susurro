@@ -154,3 +154,85 @@ later. Smart Spacing menu toggle: becomes the stage's master toggle. Tests: pure
    together as a new release. In fact, there'll be a third feature we're going to add before we actually
    ship." So the work happens on its own branch, based on `feature/parakeet-v2`, and ships in the same
    release as Parakeet and a third, still-unnamed feature. Text handling is not released on its own.
+
+## 5. Implementation (BEA-648, branch `feature/text-handling`)
+- `Sources/SusurroCore/TextHandling.swift`: `InsertContext` (before/after/source/pid/bundleID/engine/
+  secureInput), `FieldRead`, `InsertContext.resolve` (AX wins, then self-tracked memory, else unknown;
+  secure input or a secure field yields no context), `TextTransform`, and the ordered
+  `TextHandlingStage.standard`: `ContinuationCase` → `SentenceCase` → `LeadingSpace`.
+  Unknown context = empty field (no space, sentence case). `SpacingRule` is kept but no longer called.
+- `PostProcessor.process(_:applySentenceCase:)`: the app passes `false`, so step 7 runs in the stage
+  instead; rules.json `options.autoCapitalize` still switches `SentenceCase` on/off. The CLI and goldens
+  keep the default (`true`).
+- `DictationMemory` keeps a 16-character tail and appends within the same app.
+- `Sources/Susurro/FocusedFieldReader.swift`: on push-to-talk release, reads the frontmost app's focused
+  element concurrently with transcription, capped at 250 ms (0.2 s AX messaging timeout per call).
+  Order: secure role/subrole → skip; `kAXValueAttribute` + `kAXSelectedTextRangeAttribute`; empty value →
+  empty field; else text markers (`AXSelectedTextMarkerRange` → `AXStringForTextMarkerRange` from
+  `AXStartTextMarker`, accepted only if it is a prefix of the value); sets `AXManualAccessibility`
+  once per pid for Electron. The read is discarded if the frontmost app changed before insertion.
+- Smart Spacing (menu) is the stage's master toggle: off = no AX read, sentence case only.
+- Log line per dictation: `ptt: context source=<accessibility|selfTracked|none> app=<bundle id> known=<bool>`.
+  No field text is logged.
+- Unit fixtures: `Tests/SusurroTests/TextHandlingTests.swift` (all three symptoms, openers/quotes,
+  pronoun I and internal capitals, fallback, secure fields, toggles).
+
+## 6. Device test script (board)
+Dogfood build installed with `make install` (`/Applications/Susurro.app`). Smart Spacing on.
+In each app — TextEdit, Safari (any text box, e.g. a search field), Chrome (same), Slack (message box),
+VS Code (editor), Terminal (prompt) — do these four steps and note what appears:
+1. Empty field: dictate "hello there". Expect `Hello there` with no leading space.
+2. Without typing, dictate "and then we left". Expect ` and then we left` (one space, lower-case "and").
+3. Type a space yourself, then dictate "it was late". Expect exactly one space, lower-case "it".
+4. Type a full stop, then dictate "next sentence". Expect ` Next sentence`.
+Then clear the field (or send the Slack message with Return) and repeat step 1: no leading space.
+Per-app coverage comes from `~/Library/Logs/Susurro/text-handling.log`: one line per dictation
+with the app, the context source and the AX read path (lengths/positions only, never text).
+The unified log does not keep Susurro's NSLog lines, so `log show` cannot be used for this.
+Note: the engines end sentences with a full stop, so step 1 gives `Hello there.`
+
+### 5.1 Context providers (pluggable, keyed on shape, not on app)
+The Accessibility reader (`FocusedFieldReader`) only collects raw facts into a `FieldSnapshot`
+(value, selected range, text-marker prefix, role, secure). An ordered list of pure
+`ContextProvider`s in `SusurroCore/ContextProviders.swift` interprets it; the first answer wins:
+
+| Shape the app exposes | Provider | Seen in |
+|---|---|---|
+| value + selected range | `SelectionRangeProvider` (caret past value end = collapsed trailing space) | TextEdit, Zen/Firefox, Safari fields |
+| empty value | `EmptyValueProvider` | any cleared field |
+| WebKit/Chromium text markers | `TextMarkerProvider` (must be a prefix of the value) | Chrome, Electron |
+| the app answers itself (per-app **app bridge**, last resort) | `AppBridgeProvider`, first in order; bridges live in `Sources/Susurro/AppBridges.swift`, looked up by bundle ID so other apps pay nothing | Emacs: `EmacsServerBridge` — one request on the Emacs server's Unix socket (emacsclient's protocol, no process spawned), 1–16 ms measured live, 150 ms timeout inside the 250 ms read cap, runs during transcription; skips the minibuffer (password prompts); no server running = no answer |
+| value containing U+0000 | dropped before any provider runs (`FieldSnapshot.sanitized`) | Emacs 30 NS port |
+| value, no cursor | `AnchoredValueProvider`: cursor = end of value if it ends with what Susurro last typed (≤ 8 chars of user edits, no newline); else right after a unique occurrence of that text (or a prefix of it) anywhere in the value; ambiguous = no answer | Warp, Terminal/iTerm |
+| nothing readable | `MemoryProvider` | everything else |
+
+No provider looks at a bundle ID, so each covers every app with that shape. A new case means a new
+provider in the list. Coverage log lines name the provider (`provider=anchoredValue.interior` etc.).
+The anchored lookup also remembers where its last insertion ended in the value (`ValuePosition`:
+caret offset and value length, numbers only). With that, a phrase that occurs more than once is
+resolved to the occurrence nearest the remembered position (`anchoredValue.interior.nearest`), and
+whitespace the user typed right after Susurro's text is seen: if the value grew by a few characters
+beyond what the anchor accounts for and they sit right after it and are all whitespace, they count
+as text before the cursor.
+Limits: a value with no cursor and no Susurro text in it (the first dictation, or after clearing)
+gives no answer, so the empty-field policy applies; edits elsewhere in the buffer between dictations can
+shift the remembered position (the nearest-match rule then still needs a clear winner).
+
+### 6.1 Per-app coverage
+Board decision (2026-11-04): the table covers the apps Matthew actually uses (Zen, Warp, and any he adds;
+Emacs showed up in the log), not the original six. Terminals: the buffer-end heuristic
+(`BufferTail`, source `bufferTail`): when the value is readable but the cursor is not, the end of the
+buffer is used as the text before the cursor if it still ends with what Susurro last typed, allowing up
+to 8 characters of the user's own edits and no newline; otherwise the memory fallback applies.
+
+| App | source seen | steps 1-4 OK | Notes |
+|---|---|---|---|
+| TextEdit | | | |
+| Safari | | | |
+| Chrome | | | |
+| Slack | | | |
+| VS Code | | | |
+| Terminal | | | |
+| Zen (Gecko) | accessibility, `range` path, role AXTextField (log: valueLen/caret consistent) | all OK on retest (72de228) | First run had a double space at step 3; the retest passed. The log never showed a caret past the value end, so the caret-past-end rule is unproven as the cause; it stays as a harmless guard |
+| Warp | `anchoredValue.end` (formerly `bufferTail`) (AXTextArea, whole buffer, no caret); empty prompt → `none` | all OK on retest (5b9e5f6): log 03:52 shows none → bufferTail → bufferTail | First run (memory only): capital "And" after a deleted full stop, double space after a typed space; fixed by the buffer-end rule |
+| Emacs 30.1 (NS) | Accessibility value is a stale, NUL-padded copy that ignores the cursor (dropped as `corruptValue`). Board decision: an Emacs app bridge if very lightweight → `appBridge.emacs` (Emacs server socket, exact text before point) | all OK, "no slower" (board, 44304ab); log 04:34 shows 8/8 dictations answered by `appBridge.emacs`, at end of buffer and mid-buffer | Requires `server-start`; without it, Susurro's memory of what it typed |

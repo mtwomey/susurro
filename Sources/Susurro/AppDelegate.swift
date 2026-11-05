@@ -682,6 +682,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let engine else { return }
         let postProcessor = postProcessor
         let cleaner = cleanupEnabled ? self.cleaner : nil
+        // Text handling (BEA-648): read the focused field through
+        // Accessibility while the engine transcribes; capped at 250 ms.
+        // Smart Spacing is the stage's master toggle — off means no read and
+        // the old context-free behaviour (sentence case only).
+        let releaseApp = NSWorkspace.shared.frontmostApplication
+        let releasePID = releaseApp?.processIdentifier
+        let releaseBundleID = releaseApp?.bundleIdentifier
+        var fieldTask: Task<FieldSnapshot?, Never>?
+        if smartSpacingEnabled, !IsSecureEventInputEnabled(), let pid = releasePID {
+            fieldTask = Task.detached(priority: .userInitiated) { await FocusedFieldReader.read(pid: pid, bundleID: releaseBundleID) }
+        }
+        let pendingFieldRead = fieldTask
         Task.detached(priority: .userInitiated) {
             let transcript: String
             do {
@@ -694,29 +706,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 transcript = ""
             }
             let raw = TranscriptFilter.stripHallucinations(transcript, engine: engine.kind)
-            var text = raw.isEmpty ? "" : postProcessor.process(raw)
-            if let cleaner, !text.isEmpty {
-                text = await cleaner.clean(text) ?? text
+            // Sentence case is deferred to the pre-insert stage, which can see
+            // what precedes the cursor.
+            var cleaned = raw.isEmpty ? "" : postProcessor.process(raw, applySentenceCase: false)
+            if let cleaner, !cleaned.isEmpty {
+                cleaned = await cleaner.clean(cleaned) ?? cleaned
             }
-            slog("ptt: transcript: \(raw) -> \(text)")
+            slog("ptt: transcript: \(raw) -> \(cleaned)")
+            let fieldRead = await pendingFieldRead?.value
+            let autoCapitalize = postProcessor.autoCapitalizeEnabled
+            let processed = cleaned
             await MainActor.run { [weak self] in
-                guard let self, !text.isEmpty else { return }
+                guard let self, !processed.isEmpty else { return }
                 // Secure input (password fields) silently blocks synthetic typing —
                 // in that case copy regardless of the setting so the words aren't lost.
                 let secureInputActive = IsSecureEventInputEnabled()
                 let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-                // Smart Spacing: self-tracked, not an Accessibility read (see
-                // docs/SMART_SPACING_PLAN.md) — only fires if Susurro itself typed
-                // into this same frontmost app last time.
-                if !secureInputActive, self.smartSpacingEnabled, let frontmostPID,
-                   SpacingRule.needsLeadingSpace(
-                       beforeCursor: self.dictationMemory.tailIfStillFocused(pid: frontmostPID)
-                   ) {
-                    text = " " + text
+                // Pre-insert text-handling stage (docs/TEXT_HANDLING_FINDINGS.md):
+                // Accessibility read of the focused field, self-tracked memory as
+                // the fallback, unknown = empty field. The AX read only counts if
+                // the same app is still frontmost. Field text is never logged.
+                let context: InsertContext
+                var provider = "off"
+                if self.smartSpacingEnabled {
+                    let sameApp = frontmostPID != nil && frontmostPID == releasePID
+                    let resolved = InsertContext.resolve(
+                        snapshot: sameApp ? fieldRead : nil,
+                        memory: frontmostPID.flatMap { self.dictationMemory.insertionIfStillFocused(pid: $0) },
+                        pid: frontmostPID, bundleID: releaseBundleID, engine: engine.kind,
+                        secureInput: secureInputActive)
+                    context = resolved.0
+                    provider = resolved.1
+                } else {
+                    context = InsertContext(before: nil, source: .none, pid: frontmostPID,
+                                            engine: engine.kind, secureInput: secureInputActive)
                 }
+                let stage = TextHandlingStage.standard(smartSpacing: self.smartSpacingEnabled,
+                                                       autoCapitalize: autoCapitalize)
+                var text = stage.apply(processed, context)
+                let readDetail = fieldRead?.detail ?? (pendingFieldRead == nil ? "notRead" : "timeout")
+                TextHandlingLog.record("source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)")
+                guard !text.isEmpty else { return }
                 let typed = TextInjector.type(text)
                 if !secureInputActive, typed, let frontmostPID {
-                    self.dictationMemory.recordTyped(text, intoPID: frontmostPID)
+                    // Where the insertion ended inside a cursorless value, so the
+                    // next anchored lookup can tell repeated phrases apart.
+                    var position: ValuePosition?
+                    if context.source == .anchoredValue, let before = context.before,
+                       let value = fieldRead?.value {
+                        let typedLength = (text as NSString).length
+                        position = ValuePosition(caretOffset: (before as NSString).length + typedLength,
+                                                 valueLength: (value as NSString).length + typedLength)
+                    }
+                    self.dictationMemory.recordTyped(text, intoPID: frontmostPID, position: position)
                 } else {
                     // Nothing was actually typed (secure input blocked it, a
                     // keystroke event failed to post, or we couldn't identify
