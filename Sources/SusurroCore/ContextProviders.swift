@@ -304,12 +304,18 @@ public struct AnchoredValueProvider: ContextProvider {
     }
 }
 
-/// Last resort: what Susurro itself last typed into this same app.
+/// Last resort: what Susurro itself last typed into this same app — only
+/// when the app exposes no readable value. When a value is readable and the
+/// anchored-value provider could not place the cursor after Susurro's text,
+/// the value is evidence the memory is stale (the user cleared the line, ran
+/// the command, or new output arrived — BEA-673, Warp), so the memory is not
+/// trusted and the empty-field policy applies (no space, capitalise).
 public struct MemoryProvider: ContextProvider {
     public let name = "memory"
     public init() {}
     public func context(_ s: FieldSnapshot, memory: RememberedInsertion?) -> ProvidedContext? {
         guard let memory else { return nil }
+        if let value = s.value, !value.isEmpty { return nil }
         return ProvidedContext(before: memory.tail, after: nil, source: .selfTracked, provider: name)
     }
 }

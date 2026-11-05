@@ -163,7 +163,7 @@ import Testing
         let ok = FieldSnapshot(value: "draft text", markerBefore: "draft")
         #expect(resolve(ok, memory: nil).1 == "textMarkers")
         let doc = FieldSnapshot(value: "draft text", markerBefore: "Page title draft")
-        #expect(resolve(doc, memory: "xyz").1 == "memory")
+        #expect(resolve(doc, memory: "xyz").1 == "none")
     }
 
     // Anchored value: terminals (cursor at the end)
@@ -202,13 +202,13 @@ import Testing
         #expect(c.before?.hasSuffix("agreed on it") == true)
     }
 
-    @Test func ambiguousAnchorFallsBackToMemory() {
+    @Test func ambiguousAnchorWithReadableValueIsUnknown() {
         let text = "ok thanks\nok thanks\nmore"
-        #expect(resolve(buffer(text), memory: "ok thanks").1 == "memory")
+        #expect(resolve(buffer(text), memory: "ok thanks").1 == "none")
     }
 
-    @Test func noAnchorFallsBackToMemory() {
-        #expect(resolve(buffer("lots of new output scrolled in"), memory: "Hello there.").1 == "memory")
+    @Test func noAnchorWithReadableValueIsUnknown() {
+        #expect(resolve(buffer("lots of new output scrolled in"), memory: "Hello there.").1 == "none")
     }
 
     @Test func noMemoryMeansNoAnchor() {
@@ -250,7 +250,7 @@ import Testing
 
     @Test func repeatedPhraseWithoutPositionDoesNotGuess() {
         let text = "we left.\nx\nwe left.\ny"
-        #expect(resolve(buffer(text), memory: "we left.").1 == "memory")
+        #expect(resolve(buffer(text), memory: "we left.").1 == "none")
     }
 
     @Test func spaceTypedAfterAnchorMidBufferIsSeen() {
