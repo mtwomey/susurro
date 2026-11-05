@@ -45,6 +45,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Self-tracking, not an Accessibility read — see docs/SMART_SPACING_PLAN.md.
     private var dictationMemory = DictationMemory()
     private let hotkey = HotkeyMonitor()
+
+    // Hands-free (BEA-651). The machine decides; the rest is plumbing.
+    private var handsFree = HandsFreeMachine()
+    private var segmenter = PauseSegmenter()
+    private var hfBuffer: [Float] = []      // samples of the unfinished segment
+    private var hfBufferStart = 0           // absolute index of hfBuffer[0]
+    private var hfTotal = 0                 // samples drained this session
+    private var hfLastSpeech: Int?
+    private var hfTimer: Timer?
+    private var hfPID: pid_t?
+    private var hfBundleID: String?
+    private var hfAppObserver: NSObjectProtocol?
+    private var hfInsertChain: Task<Void, Never>?
+    private var hfGeneration = 0            // bumped on cancel: queued chunks are dropped
+    private var now: Double { ProcessInfo.processInfo.systemUptime }
     private var engine: (any TranscriptionEngine)?
     // Bumped on every loadEngine() call; a load that finishes after a newer
     // one started (fast menu switching) is discarded instead of winning.
@@ -216,6 +231,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         recorder.onInterruption = {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.recorder.isRecording else { return }
+                if self.hfTimer != nil {
+                    // Hands-free: keep what was heard before the change.
+                    self.handsFree.reset()
+                    self.hfEnd(insert: true, reason: nil)
+                    self.toast.show("Hands-free stopped — microphone changed")
+                    slog("handsfree: interrupted by audio configuration change")
+                    return
+                }
+                self.handsFree.reset()
                 _ = self.recorder.stop()
                 self.overlay.hide()
                 self.toast.show("Recording interrupted — microphone changed")
@@ -615,6 +639,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               let choice = PTTKey.all.first(where: { $0.id == id }) else { return }
         hotkey.key = choice
         choice.save()
+        hotkey.latchKey = PTTKey.latch(for: choice)
         sender.menu?.items.forEach { $0.state = ($0 == sender) ? .on : .off }
         setHotkeyStatus("hold \(choice.title) to dictate")
         toast.show("Push-to-talk key is now \(choice.title)")
@@ -623,8 +648,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Hotkey (push-to-talk)
 
     private func setUpHotkey() {
-        hotkey.onPress = { [weak self] in self?.pttPressed() }
-        hotkey.onRelease = { [weak self] in self?.pttReleased() }
+        hotkey.onPress = { [weak self] in guard let self else { return }; _ = self.hfEvent(.pttDown(at: self.now)) }
+        hotkey.onRelease = { [weak self] in guard let self else { return }; _ = self.hfEvent(.pttUp(at: self.now)) }
+        hotkey.onLatch = { [weak self] in guard let self else { return }; _ = self.hfEvent(.latchDown(at: self.now)) }
+        hotkey.onEscape = { [weak self] in guard let self else { return false }; return self.hfEvent(.escape(at: self.now)) }
 
         if HotkeyMonitor.ensureAccessibility(prompt: true), hotkey.start() {
             hotkeyGranted()
@@ -679,22 +706,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let samples = recorder.stop()
         overlay.hide()
         slog("ptt: stopped (\(samples.count) samples), transcribing")
-        guard let engine else { return }
+        let releaseApp = NSWorkspace.shared.frontmostApplication
+        transcribeAndInsert(samples, releasePID: releaseApp?.processIdentifier,
+                            releaseBundleID: releaseApp?.bundleIdentifier, expectedPID: nil)
+    }
+
+    /// Transcribe `samples` and insert the result into the focused field.
+    /// `expectedPID` (hands-free chunks): if another app is frontmost by the
+    /// time the text is ready, it goes to the clipboard instead of being typed
+    /// into the wrong app. nil = today's push-to-talk behaviour, unchanged.
+    @discardableResult
+    private func transcribeAndInsert(_ samples: [Float], releasePID: pid_t?, releaseBundleID: String?,
+                                     expectedPID: pid_t?) -> Task<Void, Never>? {
+        guard let engine else { return nil }
         let postProcessor = postProcessor
         let cleaner = cleanupEnabled ? self.cleaner : nil
         // Text handling (BEA-648): read the focused field through
         // Accessibility while the engine transcribes; capped at 250 ms.
         // Smart Spacing is the stage's master toggle — off means no read and
         // the old context-free behaviour (sentence case only).
-        let releaseApp = NSWorkspace.shared.frontmostApplication
-        let releasePID = releaseApp?.processIdentifier
-        let releaseBundleID = releaseApp?.bundleIdentifier
         var fieldTask: Task<FieldSnapshot?, Never>?
         if smartSpacingEnabled, !IsSecureEventInputEnabled(), let pid = releasePID {
             fieldTask = Task.detached(priority: .userInitiated) { await FocusedFieldReader.read(pid: pid, bundleID: releaseBundleID) }
         }
         let pendingFieldRead = fieldTask
-        Task.detached(priority: .userInitiated) {
+        return Task.detached(priority: .userInitiated) {
             let transcript: String
             do {
                 transcript = try engine.transcribe(samples: samples)
@@ -722,6 +758,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // in that case copy regardless of the setting so the words aren't lost.
                 let secureInputActive = IsSecureEventInputEnabled()
                 let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                if let expectedPID, frontmostPID != expectedPID {
+                    // Hands-free chunk finished after an app switch: never type
+                    // it somewhere the user didn't dictate into.
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(processed, forType: .string)
+                    self.dictationMemory.clear()
+                    self.toast.show("You switched apps — the last words were copied to the clipboard")
+                    slog("handsfree: chunk after app switch -> clipboard")
+                    return
+                }
                 // Pre-insert text-handling stage (docs/TEXT_HANDLING_FINDINGS.md):
                 // Accessibility read of the focused field, self-tracked memory as
                 // the fallback, unknown = empty field. The AX read only counts if
@@ -775,6 +822,128 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Hands-free (BEA-651)
+
+    /// Feed the hands-free machine and carry out its effects. Returns whether
+    /// the key event should be swallowed (only Esc while latched).
+    private func hfEvent(_ event: HandsFreeMachine.Event) -> Bool {
+        let out = handsFree.handle(event)
+        for effect in out.effects { hfApply(effect) }
+        return out.swallow
+    }
+
+    private func hfApply(_ effect: HandsFreeMachine.Effect) {
+        switch effect {
+        case .startRecording:
+            pttPressed()
+            if !recorder.isRecording { handsFree.reset() } // model not ready, mic failed
+        case .latched:
+            hfBegin()
+        case .stopAndInsert(let reason):
+            if hfTimer != nil { hfEnd(insert: true, reason: reason) } else { pttReleased() }
+        case .cancel:
+            hfEnd(insert: false, reason: nil)
+        case .warnAutoStop(let reason, let remaining):
+            overlay.setWarning(true)
+            let secs = Int(remaining.rounded())
+            toast.show(reason == .idle
+                ? "No speech — hands-free stops in \(secs) s"
+                : "Hands-free reaches its 2-hour limit in \(secs) s")
+        }
+    }
+
+    private func hfBegin() {
+        guard recorder.isRecording else { handsFree.reset(); return }
+        let app = NSWorkspace.shared.frontmostApplication
+        hfPID = app?.processIdentifier
+        hfBundleID = app?.bundleIdentifier
+        segmenter = PauseSegmenter()
+        hfBuffer = []
+        hfBufferStart = 0
+        hfTotal = 0
+        hfLastSpeech = nil
+        overlay.setHandsFree(true)
+        slog("handsfree: latched")
+        hfTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            Task { @MainActor [weak self] in self?.hfPump() }
+        }
+        hfAppObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { note in
+            let pid = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier
+            MainActor.assumeIsolated { [weak self] in
+                guard let self, self.hfTimer != nil, pid != self.hfPID,
+                      pid != ProcessInfo.processInfo.processIdentifier else { return }
+                _ = self.hfEvent(.appSwitched(at: self.now))
+            }
+        }
+    }
+
+    /// Drain new audio, cut at pauses, queue finished chunks, drive auto-stop.
+    private func hfPump() {
+        guard hfTimer != nil else { return }
+        hfFeed(recorder.takeAvailable())
+        if let last = segmenter.lastSpeechSample, last != hfLastSpeech {
+            hfLastSpeech = last
+            overlay.setWarning(false)
+            _ = hfEvent(.heardSpeech(at: now))
+        }
+        _ = hfEvent(.tick(at: now))
+    }
+
+    private func hfFeed(_ samples: [Float]) {
+        guard !samples.isEmpty else { return }
+        hfBuffer.append(contentsOf: samples)
+        hfTotal += samples.count
+        for cut in segmenter.append(samples) { hfDispatch(upTo: cut.sample, hasSpeech: cut.hasSpeech) }
+    }
+
+    private func hfDispatch(upTo sample: Int, hasSpeech: Bool) {
+        let n = sample - hfBufferStart
+        guard n > 0, n <= hfBuffer.count else { return }
+        let chunk = Array(hfBuffer[..<n])
+        hfBuffer.removeFirst(n)
+        hfBufferStart = sample
+        guard hasSpeech else { return }
+        slog("handsfree: chunk \(chunk.count) samples")
+        let previous = hfInsertChain
+        let generation = hfGeneration
+        let pid = hfPID, bundleID = hfBundleID
+        // Chunks are transcribed and typed strictly in order.
+        hfInsertChain = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self, generation == self.hfGeneration else { return }
+            await self.transcribeAndInsert(chunk, releasePID: pid, releaseBundleID: bundleID,
+                                           expectedPID: pid)?.value
+        }
+    }
+
+    private func hfEnd(insert: Bool, reason: HandsFreeMachine.StopReason?) {
+        hfTimer?.invalidate()
+        hfTimer = nil
+        if let hfAppObserver { NSWorkspace.shared.notificationCenter.removeObserver(hfAppObserver) }
+        hfAppObserver = nil
+        let rest = recorder.stop()
+        overlay.hide()
+        if insert {
+            hfFeed(rest)
+            if let last = segmenter.finish(totalSamples: hfTotal) {
+                hfDispatch(upTo: last.sample, hasSpeech: last.hasSpeech)
+            }
+        } else {
+            hfGeneration += 1 // drop chunks not yet typed
+        }
+        hfBuffer = []
+        slog("handsfree: ended insert=\(insert) reason=\(String(describing: reason)) samples=\(hfTotal)")
+        switch reason {
+        case .idle?: toast.show("Hands-free stopped — no speech for 60 s")
+        case .safetyLimit?: toast.show("Hands-free stopped — 2-hour limit")
+        case .appSwitched?: toast.show("Hands-free stopped — you switched apps")
+        case nil where !insert: toast.show("Hands-free discarded")
+        default: break
         }
     }
 
