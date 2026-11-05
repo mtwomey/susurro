@@ -73,7 +73,10 @@ final class HelpWindowController {
         For longer passages: hold your push-to-talk key, tap the latch key \
         (default: Right Command; Right Option if push-to-talk is Right \
         Command), then let go and keep talking. The overlay turns blue and \
-        says HANDS-FREE. Text is typed at each pause. Tap the push-to-talk \
+        says HANDS-FREE. Text is typed at each pause, with its full stop or \
+        question mark. If you were only pausing to think and carry on with \
+        the same sentence, Susurro removes that mark and continues in lower \
+        case. Tap the push-to-talk \
         key to stop, or press Esc to discard what hasn't been typed yet. \
         Hands-free stops by itself after 60 seconds without speech, after \
         two hours, or when you switch apps. Change the latch key in \

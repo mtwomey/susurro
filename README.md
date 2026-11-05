@@ -12,9 +12,10 @@ leaves your machine.
   latch key; never the push-to-talk key), let go and keep talking — text is
   typed at each pause. Tap push-to-talk to stop, Esc to discard. Stops by
   itself after 60 s without speech, 2 hours, or an app switch. A thinking
-  pause mid-sentence no longer leaves a stray period: each piece's final
-  ./?/! is held back and decided by re-hearing the words on both sides of the
-  pause (see docs/HANDSFREE_JOINS.md)
+  pause mid-sentence no longer leaves a stray period: each piece is typed with
+  its ./?/! at the pause, and when you carry on Susurro re-hears the words on
+  both sides of the pause and removes the mark if the sentence continues
+  (see docs/HANDSFREE_JOINS.md)
 - Live waveform overlay while recording
 - Spoken punctuation: "comma", "period", "quote … end quote", "new line" —
   fully configurable via a human-editable `rules.json` (plus jargon fix-ups
