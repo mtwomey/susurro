@@ -17,7 +17,7 @@ usage: handsfree_join_eval.py <voice-dir> <out-dir> [--min-pause S] [--engine pa
 """
 import array, json, os, re, subprocess, sys, wave
 
-GAPS = [0.8, 1.2, 1.8, 2.5]
+GAPS = [float(x) for x in os.environ.get("HF_GAPS", "0.8,1.2,1.8,2.5").split(",")]
 # v08 contains a spoken retake ("...at 2:45. This one's messed up. The server
 # rebooted at 2:47...") - a real third sentence, so it is reported, not scored.
 DIRTY = {"v08.wav"}
@@ -95,7 +95,7 @@ def main():
     for f in clips:
         dst = os.path.join(out, "src_" + f); to16k(os.path.join(voice, f), dst); v[f] = read(dst)
     for i in range(len(clips) - 1):
-        g = GAPS[i % 4]; name = f"voice_break_{i+1:02d}.wav"
+        g = GAPS[i % len(GAPS)]; name = f"voice_break_{i+1:02d}.wav"
         write(os.path.join(out, name), v[clips[i]] + silence(g) + v[clips[i + 1]])
         cases.append((name, "voice-break", "sentenceBreak", g, {clips[i], clips[i + 1]}))
     # Pick, per clip, the first candidate split whose two halves transcribe
@@ -119,11 +119,11 @@ def main():
             a = pre[f"cand_{f[:-4]}_{j}_a.wav"]["chunks"]; b = pre[f"cand_{f[:-4]}_{j}_b.wav"]["chunks"]
             if a and b and norm(" ".join(a + b)) == whole: split_at[f] = k; break
     for i, f in enumerate(clips):
-        g = GAPS[i % 4]; s = v[f]; k = split_at[f]; name = f"voice_mid_{i+1:02d}.wav"
+        g = GAPS[i % len(GAPS)]; s = v[f]; k = split_at[f]; name = f"voice_mid_{i+1:02d}.wav"
         write(os.path.join(out, name), s[:k] + silence(g) + s[k:])
         cases.append((name, "voice-mid", "continuation", g, {f}))
     for i, (a, b) in enumerate(SAY_MID + SAY_BREAK):
-        mid = i < len(SAY_MID); g = GAPS[i % 4]
+        mid = i < len(SAY_MID); g = GAPS[i % len(GAPS)]
         say(a, os.path.join(out, "a.wav"), out); say(b, os.path.join(out, "b.wav"), out)
         name = f"say_{'mid' if mid else 'break'}_{i+1:02d}.wav"
         write(os.path.join(out, name), read(os.path.join(out, "a.wav")) + silence(g) + read(os.path.join(out, "b.wav")))

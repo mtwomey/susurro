@@ -114,6 +114,19 @@ public enum HandsFreeJoin {
         return before.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasSuffix(tail.lowercased())
     }
 
+    /// Where a chunk's audio should start: a long thinking pause (10-15 s)
+    /// otherwise leads the next chunk as silence, and Parakeet can drop a
+    /// short word that follows it ("...what you" + 15 s + "think" typed
+    /// nothing for "think"). Only a lead-in longer than `triggerSeconds` is
+    /// trimmed, to `keepSeconds`, so chunks after ordinary pauses keep exactly
+    /// today's audio (and words).
+    public static func trimmedStart(chunkStart: Int, firstSpeech: Int?, sampleRate: Int = 16_000,
+                                    triggerSeconds: Double = 3, keepSeconds: Double = 1.5) -> Int {
+        guard let firstSpeech else { return chunkStart }
+        guard firstSpeech - chunkStart > Int(triggerSeconds * Double(sampleRate)) else { return chunkStart }
+        return firstSpeech - Int(keepSeconds * Double(sampleRate))
+    }
+
     // MARK: - Joint clip
 
     /// Build the joint clip. Indices are relative to each chunk.

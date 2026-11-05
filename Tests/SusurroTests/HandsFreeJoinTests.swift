@@ -74,6 +74,14 @@ struct HandsFreeJoinTests {
         #expect(!HandsFreeJoin.isInPlace(before: "", previousBody: "we should probably"))
     }
 
+    @Test func trimsLongLeadingPause() {
+        // 15 s of silence before speech at 16 kHz: keep 1.5 s of lead-in.
+        #expect(HandsFreeJoin.trimmedStart(chunkStart: 1000, firstSpeech: 1000 + 240_000) == 1000 + 240_000 - 24_000)
+        // Ordinary pause (2.5 s lead-in): untouched.
+        #expect(HandsFreeJoin.trimmedStart(chunkStart: 1000, firstSpeech: 1000 + 40_000) == 1000)
+        #expect(HandsFreeJoin.trimmedStart(chunkStart: 1000, firstSpeech: nil) == 1000)
+    }
+
     // MARK: joined
 
     @Test func joinedText() {

@@ -19,7 +19,7 @@ OK  voice-mid    gap=2.5 continuation   words=same | Our flight leaves at 6:15 a
 OK  voice-mid    gap=0.8 nocut          words=same | Revenue grew 18% to 4.2 million last quarter.
 OK  voice-mid    gap=1.2 continuation   words=same | What time does the train leave on Saturday.
 OK  voice-mid    gap=1.8 continuation   words=same EXCL:split-in-word | Set a reminder for 11 a.m come on December 1st.
-OK  voice-mid    gap=2.5 continuation   words=same EXCL:dirty-clip | The server rebooted at two forty five this one's messed up. The server rebooted at 2:47 am and was down for 12 minutes.
+OK  voice-mid    gap=2.5 continuation   words=same EXCL:dirty-clip | The server rebooted at two forty five this one's messed up. The server rebooted at 2:47 a.m. and was down for twelve minutes.
 OK  voice-mid    gap=0.8 nocut          words=same | Did you send the report to the whole team?
 OK  voice-mid    gap=1.2 continuation   words=same EXCL:split-in-word | The rent goes up by 3% starting on April 1st.
 OK  voice-mid    gap=1.8 continuation   words=same EXCL:split-in-word | Deploy the Dexter pipeline and rerun the DBT t models in Snowflake.
@@ -47,4 +47,4 @@ voice-break [excluded: dirty-clip]            2/2 = 100%  (no cut: 0)
 voice-mid                                     7/7 = 100%  (no cut: 3)
 voice-mid [excluded: dirty-clip]              1/1 = 100%  (no cut: 0)
 voice-mid [excluded: split-in-word]           6/7 = 86%  (no cut: 0)
-words identical to per-chunk: True; joint transcribe total 1.88s over 28 joins
+words identical to per-chunk: True; joint transcribe total 2.01s over 28 joins

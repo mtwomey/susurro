@@ -137,7 +137,8 @@ do {
             var chunkTexts: [String] = [], decisions: [String] = [], typed = ""
             var jointSeconds = 0.0
             for cut in cuts {
-                let chunk = Array(samples[start..<cut.sample]); let s0 = start; start = cut.sample
+                let s0 = HandsFreeJoin.trimmedStart(chunkStart: start, firstSpeech: cut.firstSpeech)
+                let chunk = Array(samples[s0..<cut.sample]); start = cut.sample
                 guard cut.hasSpeech else { continue }
                 let text = clean(try engine.transcribe(samples: chunk))
                 guard !text.isEmpty else { continue }

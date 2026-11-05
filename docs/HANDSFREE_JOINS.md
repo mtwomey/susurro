@@ -66,6 +66,20 @@ HANDSFREE_JOINS_EVAL_minpause{0.7,1.0}.txt):
 The only miss at 1.0 is a split-in-word fixture ("from the f. Fifth"), where the
 first piece's own words are already broken.
 
+Long thinking pauses (5 / 10 / 15 s, board note on BEA-657), minPause 1.0,
+HANDSFREE_JOINS_EVAL_longpauses.txt: voice-break 12/12 clean (13/14 incl. v08,
+whose retake makes 3 pieces the scorer can't grade), voice-mid 7/7 clean
+(14/15 incl. split-in-word/v08), say 12/12. The join is pause-length
+independent: the joint clip caps the pause at 2 s.
+
+Long pauses exposed a pre-existing per-chunk bug (also on main): the segmenter
+cuts 0.5 s into a pause, so a 15 s pause led the next chunk as ~14.5 s of
+silence and Parakeet dropped or garbled the words after it ("Let me know what
+you" + 15 s + "what do you think?" typed only "Let me know what you").
+Fix: `HandsFreeJoin.trimmedStart` trims a chunk's lead-in silence to 1.5 s when
+it is longer than 3 s. Chunks after ordinary pauses keep their audio (1 of 41
+normal-gap cases changed words vs before the trim).
+
 Cost: joint transcribe ~0.07 s per join (1.88 s over 28 joins). minPause 1.0
 means each piece is typed 0.3 s later after you stop talking (cut at 1.0 s of
 silence instead of 0.7 s); short gaps (0.8 s) no longer cut at all, which is

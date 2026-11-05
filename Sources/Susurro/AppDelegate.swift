@@ -985,8 +985,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let sample = cut.sample, hasSpeech = cut.hasSpeech
         let n = sample - hfBufferStart
         guard n > 0, n <= hfBuffer.count else { return }
-        let chunk = Array(hfBuffer[..<n])
-        let start = hfBufferStart
+        // Drop a long pause's leading silence (BEA-657: 10-15 s thinking pauses).
+        let start = HandsFreeJoin.trimmedStart(chunkStart: hfBufferStart, firstSpeech: cut.firstSpeech)
+        let chunk = Array(hfBuffer[(start - hfBufferStart)..<n])
         hfBuffer.removeFirst(n)
         hfBufferStart = sample
         let info = HFChunk(samples: chunk,
