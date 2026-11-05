@@ -56,7 +56,7 @@ enum FocusedFieldReader {
         let value: String? = copy(focused, kAXValueAttribute)
         let selection = selectedRange(focused).map { NSRange(location: $0.location, length: $0.length) }
         let markerBefore = selection == nil ? textBeforeSelectionViaMarkers(focused) : nil
-        return FieldSnapshot(value: value, selection: selection, markerBefore: markerBefore, role: role)
+        return FieldSnapshot(value: value, selection: selection, markerBefore: markerBefore, role: role).sanitized
     }
 
     private static func enableManualAccessibilityOnce(app: AXUIElement, pid: pid_t) {

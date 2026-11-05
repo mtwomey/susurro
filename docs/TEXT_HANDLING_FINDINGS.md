@@ -201,7 +201,8 @@ The Accessibility reader (`FocusedFieldReader`) only collects raw facts into a `
 | value + selected range | `SelectionRangeProvider` (caret past value end = collapsed trailing space) | TextEdit, Zen/Firefox, Safari fields |
 | empty value | `EmptyValueProvider` | any cleared field |
 | WebKit/Chromium text markers | `TextMarkerProvider` (must be a prefix of the value) | Chrome, Electron |
-| value, no cursor | `AnchoredValueProvider`: cursor = end of value if it ends with what Susurro last typed (≤ 8 chars of user edits, no newline); else right after a unique occurrence of that text (or a prefix of it) anywhere in the value; ambiguous = no answer | Warp, Terminal/iTerm (end), Emacs NS port (window value = buffer; interior) |
+| value containing U+0000 | dropped before any provider runs (`FieldSnapshot.sanitized`) | Emacs 30 NS port |
+| value, no cursor | `AnchoredValueProvider`: cursor = end of value if it ends with what Susurro last typed (≤ 8 chars of user edits, no newline); else right after a unique occurrence of that text (or a prefix of it) anywhere in the value; ambiguous = no answer | Warp, Terminal/iTerm |
 | nothing readable | `MemoryProvider` | everything else |
 
 No provider looks at a bundle ID, so each covers every app with that shape. A new case means a new
@@ -233,4 +234,4 @@ to 8 characters of the user's own edits and no newline; otherwise the memory fal
 | Terminal | | | |
 | Zen (Gecko) | accessibility, `range` path, role AXTextField (log: valueLen/caret consistent) | all OK on retest (72de228) | First run had a double space at step 3; the retest passed. The log never showed a caret past the value end, so the caret-past-end rule is unproven as the cause; it stays as a harmless guard |
 | Warp | `anchoredValue.end` (formerly `bufferTail`) (AXTextArea, whole buffer, no caret); empty prompt → `none` | all OK on retest (5b9e5f6): log 03:52 shows none → bufferTail → bufferTail | First run (memory only): capital "And" after a deleted full stop, double space after a typed space; fixed by the buffer-end rule |
-| Emacs 30.1 (NS) | AXWindow, value = buffer, no range → `AnchoredValueProvider` | end of buffer OK; mid-buffer OK (log 04:00:55 `anchoredValue.interior`); a space typed before dictating gave a capital (04:01:00 fell to `memory`: the repeated test phrase made the anchor ambiguous) | Fixed by remembered insertion position + typed-whitespace detection; retest pending |
+| Emacs 30.1 (NS) | AX value is NOT the buffer: a stale copy (text up to some earlier point, a NUL, a fragment of the buffer end, NUL padding to buffer length) that did not change when point moved (probe via emacsclient, 2026-11-05). Now dropped as `corruptValue` → memory fallback | 04:23 run with anchoring on that value was bad (leading spaces, missing spaces, wrong capitals); earlier good results were luck | Memory fallback only (sees Susurro's own text, not user edits). Reliable option needs a per-app provider (e.g. ask Emacs for text before point via emacsclient) — board decision |

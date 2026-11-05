@@ -43,6 +43,24 @@ public struct FieldSnapshot: Sendable, Equatable {
     }
 
     public static let secureField = FieldSnapshot(secure: true)
+
+    /// A value containing U+0000 is not real text: Emacs 30's NS port
+    /// publishes a stale buffer copy cut at a NUL and padded with NULs, which
+    /// does not follow the cursor. Such a value (and any selection measured
+    /// against it) is dropped, so the memory fallback applies instead of
+    /// anchoring inside garbage.
+    public var sanitized: FieldSnapshot {
+        guard let value, value.contains("\u{0}") else { return self }
+        var copy = self
+        copy.value = nil
+        copy.selection = nil
+        copy.markerBefore = nil
+        copy.corruptValue = true
+        return copy
+    }
+
+    /// Set by `sanitized` when the value was dropped.
+    public var corruptValue = false
     /// Nothing focused, or the read timed out.
     public static let nothing = FieldSnapshot()
 
@@ -53,6 +71,7 @@ public struct FieldSnapshot: Sendable, Equatable {
         if let value { parts.append("valueLen=\((value as NSString).length)") }
         if let selection { parts.append("caret=\(selection.location)") }
         if let markerBefore { parts.append("markerLen=\(markerBefore.count)") }
+        if corruptValue { parts.append("corruptValue") }
         return parts.joined(separator: " ")
     }
 }
@@ -252,7 +271,7 @@ public extension InsertContext {
             return (InsertContext(before: nil, source: .none, pid: pid, bundleID: bundleID,
                                   engine: engine, secureInput: true), "secure")
         }
-        let snap = snapshot ?? .nothing
+        let snap = (snapshot ?? .nothing).sanitized
         for provider in providers {
             if let found = provider.context(snap, memory: memory) {
                 return (InsertContext(before: found.before, after: found.after, source: found.source,

@@ -282,4 +282,16 @@ import Testing
         #expect(c.before?.hasSuffix("we left ") == true)
         #expect(stage.apply("It was late.", c) == "it was late.")
     }
+
+    // Emacs 30 NS: stale value cut at a NUL and NUL-padded (board run 04:23)
+
+    @Test func nulCorruptedValueIsIgnored() {
+        let value = "Hello there and then we left.\u{0}we left.\u{0}\u{0}\u{0}"
+        let snap = FieldSnapshot(value: value, role: "AXWindow")
+        #expect(snap.sanitized.value == nil)
+        #expect(snap.sanitized.detail.contains("corruptValue"))
+        let (c, p) = resolve(snap, memory: "we left.")
+        #expect(p == "memory")
+        #expect(c.before == "we left.")
+    }
 }
