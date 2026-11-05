@@ -42,15 +42,55 @@ import Testing
     }
 }
 
-/// Known limit (documented, not fixed here): a dictated command that ran once
-/// appears once in the history, and the mid-buffer anchor (built for editors
-/// without a caret) still places the cursor after it.
-@Suite struct StaleMemoryKnownLimits {
-    @Test func singleRunCommandStillAnchorsMidBuffer() {
-        let v = "$ make\nok\n$ git status please\nclean\nuser ~/repo git:(main) "
-        let (_, p) = InsertContext.resolve(snapshot: FieldSnapshot(value: v, role: "AXTextArea"),
+/// Board test 20:01-20:02Z (Warp): after Enter on empty prompts, or after
+/// backspacing over the whole line, the mid-buffer anchor found Susurro's text
+/// in the history -> stray space and a lower-case "continuation".
+@Suite struct WarpHistoryAnchorTests {
+    let stage = TextHandlingStage.standard(smartSpacing: true, autoCapitalize: true)
+    let prompt = "user ~/repo git:(main) • +1 -0 "
+    func resolve(_ value: String, _ memory: RememberedInsertion) -> (InsertContext, String) {
+        InsertContext.resolve(snapshot: FieldSnapshot(value: value, role: "AXTextArea"), memory: memory,
+                              pid: 1, bundleID: nil, engine: nil, secureInput: false)
+    }
+    /// What Susurro records after typing `typed` at the end of `value`.
+    func afterTyping(_ typed: String, into value: String) -> RememberedInsertion {
+        let n = (value + typed as NSString).length
+        return RememberedInsertion(tail: typed, position: ValuePosition(caretOffset: n, valueLength: n))
+    }
+
+    @Test func commandRunOnceWithoutPositionGetsNoSpace() {
+        let v = "$ make\nok\n$ git status please\nclean\n" + prompt
+        let (c, p) = InsertContext.resolve(snapshot: FieldSnapshot(value: v, role: "AXTextArea"),
                                            memoryTail: "git status please", pid: 1, bundleID: nil,
                                            engine: nil, secureInput: false)
-        #expect(p == "anchoredValue.interior")
+        #expect(p == "none")
+        #expect(stage.apply("next one", c) == "Next one")
+    }
+
+    @Test func enterOnEmptyPromptsThenDictateGetsNoSpace() {
+        let start = "$ make\nok\n" + prompt
+        let memory = afterTyping("check the build", into: start)
+        // Enter ran it, then Enter twice more on empty prompts.
+        let now = start + "check the build\nok\n" + prompt + "\n" + prompt + "\n" + prompt
+        let (c, p) = resolve(now, memory)
+        #expect(p == "none")
+        #expect(stage.apply("run it again", c) == "Run it again")
+    }
+
+    @Test func backspacedWholeLineGetsCapitalAndNoSpace() {
+        // The text survives once in the history (an earlier run), the input line was cleared.
+        let start = "$ check the build\nok\n" + prompt
+        let memory = afterTyping("check the build", into: start)
+        let (c, p) = resolve(start, memory)
+        #expect(p == "none")
+        #expect(stage.apply("new sentence", c) == "New sentence")
+    }
+
+    @Test func continuationOnTheLineStillSpaced() {
+        let start = "$ make\nok\n" + prompt
+        let memory = afterTyping("check the build", into: start)
+        let (c, p) = resolve(start + "check the build", memory)
+        #expect(p == "anchoredValue.end")
+        #expect(stage.apply("now", c) == " now")
     }
 }

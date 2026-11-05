@@ -187,19 +187,34 @@ import Testing
 
     // Anchored value: editors (cursor mid-buffer, e.g. Emacs)
 
+    func positioned(_ tail: String, endingAt before: String, in value: String) -> RememberedInsertion {
+        RememberedInsertion(tail: tail, position: ValuePosition(caretOffset: (before as NSString).length,
+                                                                valueLength: (value as NSString).length))
+    }
+
     @Test func editorCursorMidBuffer() {
-        let text = ";; notes\nFirst line I said\n\nlater paragraph.\n"
-        let (c, p) = resolve(buffer(text), memory: "line I said")
+        let before = ";; notes\nFirst line I said"
+        let text = before + "\n\nlater paragraph.\n"
+        let (c, p) = InsertContext.resolve(snapshot: buffer(text), memory: positioned("line I said", endingAt: before, in: text),
+                                           pid: 1, bundleID: nil, engine: nil, secureInput: false)
         #expect(p == "anchoredValue.interior")
         #expect(c.before?.hasSuffix("First line I said") == true)
         #expect(stage.apply("And more", c) == " and more")
     }
 
     @Test func editorDeletedCharacterMidBuffer() {
+        let original = "Intro.\nWe agreed on it.\nTail text.\n"
         let text = "Intro.\nWe agreed on it\nTail text.\n"
-        let (c, p) = resolve(buffer(text), memory: "agreed on it.")
+        let (c, p) = InsertContext.resolve(snapshot: buffer(text),
+                                           memory: positioned("agreed on it.", endingAt: "Intro.\nWe agreed on it.", in: original),
+                                           pid: 1, bundleID: nil, engine: nil, secureInput: false)
         #expect(p == "anchoredValue.interior")
         #expect(c.before?.hasSuffix("agreed on it") == true)
+    }
+
+    @Test func midBufferWithoutRememberedPositionIsUnknown() {
+        let text = ";; notes\nFirst line I said\n\nlater paragraph.\n"
+        #expect(resolve(buffer(text), memory: "line I said").1 == "none")
     }
 
     @Test func ambiguousAnchorWithReadableValueIsUnknown() {

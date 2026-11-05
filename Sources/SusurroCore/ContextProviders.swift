@@ -254,7 +254,9 @@ public struct AnchoredValueProvider: ContextProvider {
         return nil
     }
 
-    /// Cursor mid-buffer. The anchor is the longest prefix of the remembered
+    /// Cursor mid-buffer (editors without a caret). Requires a remembered
+    /// insertion position whose value length still matches (see the guard
+    /// below). The anchor is the longest prefix of the remembered
     /// text found in the value. Several matches (the same phrase dictated
     /// twice) are resolved by the remembered insertion position: the match
     /// nearest to it wins, if it is clearly nearest; otherwise no answer.
@@ -288,15 +290,21 @@ public struct AnchoredValueProvider: ContextProvider {
                 end = sorted[0]
                 how = ".interior.nearest"
             }
-            if let remembered = memory.position?.valueLength {
-                // Characters the user deleted from the end of Susurro's text
-                // (a full stop) are already missing from the anchor.
-                let deleted = (memory.tail as NSString).length - (prefix as NSString).length
-                let grown = ns.length - (remembered - deleted)
-                if grown > 0, grown <= maxUserEdit, end + grown <= ns.length {
-                    let typed = ns.substring(with: NSRange(location: end, length: grown))
-                    if typed.allSatisfy(\.isWhitespace) { end += grown }
-                }
+            // Mid-buffer is only trusted when Susurro recorded where its last
+            // insertion ended and the buffer has since changed by no more than
+            // a few typed characters (BEA-673, Warp): otherwise the anchor is
+            // an old copy of the text — a command already run and now in the
+            // history, or a line the user cleared — and the cursor is
+            // somewhere else.
+            guard let remembered = memory.position?.valueLength else { return nil }
+            // Characters the user deleted from the end of Susurro's text
+            // (a full stop) are already missing from the anchor.
+            let deleted = (memory.tail as NSString).length - (prefix as NSString).length
+            let grown = ns.length - (remembered - deleted)
+            guard grown >= 0, grown <= maxUserEdit else { return nil }
+            if grown > 0, end + grown <= ns.length {
+                let typed = ns.substring(with: NSRange(location: end, length: grown))
+                if typed.allSatisfy(\.isWhitespace) { end += grown }
             }
             return (ns.substring(to: end), ns.substring(from: end), how)
         }
