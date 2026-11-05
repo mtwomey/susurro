@@ -41,9 +41,18 @@ import Testing
         #expect(cuts.isEmpty)
     }
 
-    @Test func tooLittleSpeechDoesNotCut() {
+    @Test func singleShortWordIsCutAtThePause() {
+        // Board device test (BEA-651): one short word then a pause must be
+        // typed at the pause, not held until the 25 s cap.
         var s = PauseSegmenter()
-        let cuts = s.append(Self.tone(0.2) + Self.silence(2.0))
+        let cuts = s.append(Self.silence(1.0) + Self.tone(0.3) + Self.silence(2.0))
+        #expect(cuts.count == 1 && cuts[0].hasSpeech)
+    }
+
+    @Test func clickDoesNotCut() {
+        var s = PauseSegmenter()
+        let click = [Float](repeating: 0.3, count: 640) // 40 ms transient
+        let cuts = s.append(Self.silence(1.0) + click + Self.silence(2.0))
         #expect(cuts.isEmpty)
     }
 

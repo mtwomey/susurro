@@ -629,11 +629,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if SMAppService.mainApp.status == .enabled {
                 try SMAppService.mainApp.unregister()
                 sender.state = .off
-                toast.show("Susurro will no longer start at login")
+                toast.show("Will no longer start at login")
             } else {
                 try SMAppService.mainApp.register()
                 sender.state = .on
-                toast.show("Susurro will start at login")
+                toast.show("Will start at login")
             }
         } catch {
             slog("login item toggle failed: \(error)")
