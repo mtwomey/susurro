@@ -168,3 +168,14 @@ AX write plus read-back: ~1–2 ms per chunk after the first call (36 ms cold in
 ## Recommendation
 
 **Conditional GO** for a v1 that works well in native apps, Firefox-engine browsers and terminals, with Emacs via its bridge. Electron apps (Slack, VS Code, likely Hermes desktop) fall back to the clipboard, with a clear toast, unless the board accepts an opt-in focus hop. Run the 0.5-day gap probe on sacrificial Slack/Hermes fields before committing. If those Electron targets are must-haves and a focus hop is unacceptable, the answer is **no-go**.
+
+## Board decisions (2026-11-06, BEA-678 interview)
+
+- **Go/no-go:** probe the gaps first (Slack, Hermes desktop, Warp, VS Code with Stage Manager off; React/contenteditable input; Obsidian read-back; strict full-support criteria for each launch app; the passive-learning spike). Go/no-go follows the probe.
+- **Apps:** no hard must-have list. Support is whatever passes the full-support criteria, and the dynamic list grows from there.
+- **Focus hop:** rejected. Latch is all or nothing.
+- **Chord:** while PTT is held, Cmd taps cycle through **three** states: push-to-talk (normal) → hands-free → latch → push-to-talk … Releasing PTT in the push-to-talk state stops and inserts, as today. So a third tap backs out of latch without stopping. On a refused latch tap, the cycle lands on hands-free and shows the pill.
+- **Rename** latched → hands-free as part of the latch work.
+- **Sequencing:** no wait. BEA-660 R1–R8, BEA-677 and v0.2.0 are all done (origin/main 812c8d1).
+- **Passive learning:** wanted, and always on (no setting) **if** the spike shows it is reliable, with no double or partial inserts.
+- **Refused or ended latch:** keep recording in hands-free.
