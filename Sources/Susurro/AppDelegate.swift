@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hfAppObserver: NSObjectProtocol?
     /// Latch (BEA-691): the pinned target, nil unless latched.
     private var hfLatch: (any LatchTarget)?
+    private var latchToken = Int(Date().timeIntervalSince1970) % 100_000
     /// One FIFO for every insertion, push-to-talk and hands-free (BEA-665, R3).
     private let insertionQueue = InsertionQueue()
     /// Keystrokes, clipboard/secure-input/app-switch policy and the
@@ -271,12 +272,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let app = NSWorkspace.shared.frontmostApplication
         let name = app?.localizedName ?? "this app"
         // Full support or nothing: allowlisted app whose bridge pins now.
-        let result: LatchPinResult = (hfTimer != nil && app?.processIdentifier == hfPID)
-            ? LatchTargets.pin(bundleID: app?.bundleIdentifier, appName: name)
-            : .refused(pill: LatchDelivery.notSupportedPill(appName: name))
-        guard case .pinned(let target) = result else {
-            if case .refused(let pill) = result { toast.show(pill) }
-            Log.handsfree.event("latch refused")
+        // Step 5 (docs/BRIDGES.md) moves this off the tap callback.
+        latchToken += 1
+        let result: Result<any LatchTarget, LatchRefusal>
+        if hfTimer != nil, let app, app.processIdentifier == hfPID, let bundleID = app.bundleIdentifier {
+            result = LatchPolicy.engage(LatchPinRequest(pid: app.processIdentifier, bundleID: bundleID,
+                                                        appName: name, token: latchToken))
+        } else {
+            result = .failure(.notAllowlisted)
+        }
+        guard case .success(let target) = result else {
+            if case .failure(let refusal) = result {
+                toast.show(refusal.pill(appName: name))
+                Log.handsfree.event("latch refused \(refusal)")
+            }
             _ = hfEvent(.latchRefused)
             return
         }

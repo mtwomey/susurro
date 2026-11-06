@@ -9,7 +9,7 @@ import Foundation
 /// A bridge's identity (docs/BRIDGES.md). A string-backed struct, not a
 /// closed enum: adding a bridge needs no central edit, and a future remote
 /// allowlist can name ids this build doesn't know without failing to decode.
-/// Raw values match the former `LatchMethod` cases.
+/// Raw values match the former `BridgeID` cases.
 public struct BridgeID: RawRepresentable, Hashable, Codable, Sendable, CustomStringConvertible {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
@@ -24,9 +24,6 @@ public struct BridgeID: RawRepresentable, Hashable, Codable, Sendable, CustomStr
     /// Accessibility `kAXSelectedText` write on the remembered element.
     public static let axSelectedText = BridgeID(rawValue: "axSelectedText")
 }
-
-/// Transitional name (BEA-691 bridges step 3); removed with the registry.
-public typealias LatchMethod = BridgeID
 
 /// Why a bridge call failed, distinctly (docs/BRIDGES.md §3).
 public enum BridgeError: Error, Sendable, Equatable {
@@ -46,8 +43,8 @@ public enum BridgeError: Error, Sendable, Equatable {
 /// (out of scope for v1).
 public struct LatchCapability: Sendable, Equatable, Codable {
     public var bundleID: String
-    public var method: LatchMethod
-    public init(bundleID: String, method: LatchMethod) {
+    public var method: BridgeID
+    public init(bundleID: String, method: BridgeID) {
         self.bundleID = bundleID
         self.method = method
     }
@@ -64,7 +61,7 @@ public struct LatchAllowlist: Sendable, Equatable {
     public var entries: [LatchCapability]
     public init(entries: [LatchCapability]) { self.entries = entries }
 
-    public func method(for bundleID: String?) -> LatchMethod? {
+    public func method(for bundleID: String?) -> BridgeID? {
         guard let bundleID else { return nil }
         return entries.first { $0.bundleID == bundleID }?.method
     }
@@ -73,7 +70,7 @@ public struct LatchAllowlist: Sendable, Equatable {
 /// A pinned latch target. `handle` is bridge-specific and opaque to the
 /// session (Emacs: marker variable name; Obsidian: leaf id + file path).
 public struct LatchPin: Sendable, Equatable {
-    public var method: LatchMethod
+    public var method: BridgeID
     public var bundleID: String
     public var appName: String
     /// Shown on the overlay: note or buffer name.
@@ -81,7 +78,7 @@ public struct LatchPin: Sendable, Equatable {
     public var handle: String
     /// What the target is called in pills: "buffer", "note", "document".
     public var documentNoun: String
-    public init(method: LatchMethod, bundleID: String, appName: String, documentName: String, handle: String,
+    public init(method: BridgeID, bundleID: String, appName: String, documentName: String, handle: String,
                 documentNoun: String = "document") {
         self.documentNoun = documentNoun
         self.method = method
