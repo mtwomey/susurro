@@ -126,3 +126,67 @@ public struct DictationPipeline: Sendable {
         return CrossDictationJoin.decide(previous: previous, jointText: joint)
     }
 }
+
+// MARK: - Hands-free replay (eval harness)
+
+extension DictationPipeline {
+    public struct HandsFreeReplay: Sendable, Equatable {
+        public var chunks: [String] = []
+        public var decisions: [String] = []
+        public var typed = ""
+        public var jointSeconds = 0.0
+    }
+
+    /// Replay a recording the way the app's hands-free pump handles it:
+    /// PauseSegmenter cuts (fed in 100 ms blocks), each chunk transcribed
+    /// alone, held marks decided from a joint clip, and the self-tracked text
+    /// stage between pieces. Used by `susurro-cli --handsfree` and the golden
+    /// tests (BEA-664).
+    public func replayHandsFree(_ samples: [Float], minPause: Double? = nil) throws -> HandsFreeReplay {
+        var config = PauseSegmenter.Config()
+        if let minPause { config.minPause = minPause }
+        var seg = PauseSegmenter(config: config)
+        var cuts: [PauseSegmenter.Cut] = []
+        var fed = 0
+        while fed < samples.count {
+            let end = min(samples.count, fed + 1600)
+            cuts += seg.append(Array(samples[fed..<end])); fed = end
+        }
+        if let last = seg.finish(totalSamples: samples.count) { cuts.append(last) }
+        var joiner = HeldMarkJoiner()
+        var prev: ChunkAudio?
+        var start = 0
+        var out = HandsFreeReplay()
+        for cut in cuts {
+            let s0 = HandsFreeJoin.trimmedStart(chunkStart: start, firstSpeech: cut.firstSpeech)
+            let chunk = Array(samples[s0..<cut.sample]); start = cut.sample
+            guard cut.hasSpeech else { continue }
+            let text = clean(try engine.transcribe(samples: chunk))
+            guard !text.isEmpty else { continue }
+            out.chunks.append(text)
+            let first = max(0, (cut.firstSpeech ?? s0) - s0)
+            let lastS = min(chunk.count, max(0, (cut.lastSpeech ?? cut.sample) - s0))
+            let current = ChunkAudio(samples: chunk, firstSpeech: first, lastSpeech: lastS)
+            let previous = prev
+            prev = current
+            var jointTime: Duration?
+            switch try handsFreeStep(joiner.accept(text, pid: 1), previous: previous, current: current,
+                                     jointSeconds: &jointTime) {
+            case .fresh(let t):
+                // The app's text stage: after unmarked text, ContinuationCase.
+                let ctx = InsertContext(before: out.typed.isEmpty ? nil : out.typed, source: .selfTracked)
+                out.typed += (out.typed.isEmpty ? "" : " ") + (out.typed.isEmpty ? t : ContinuationCase().apply(t, ctx))
+            case .joined(_, let d, _, let joined):
+                out.decisions.append("\(d)")
+                out.typed += joined
+            case .unresolved:
+                break
+            }
+            if let jointTime {
+                out.jointSeconds += Double(jointTime.components.seconds) + Double(jointTime.components.attoseconds) / 1e18
+            }
+        }
+        if let m = joiner.stop() { out.typed.append(m) }
+        return out
+    }
+}

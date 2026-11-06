@@ -17,6 +17,21 @@
 import Foundation
 import SusurroCore
 
+/// Records raw transcripts in call order (dev golden capture, BEA-664).
+final class RecordingEngine: TranscriptionEngine, @unchecked Sendable {
+    static var sampleRate: Int { TranscriptionEngines.sampleRate }
+    let inner: any TranscriptionEngine
+    private(set) var calls: [String] = []
+    init(_ inner: any TranscriptionEngine) { self.inner = inner }
+    var kind: EngineKind { inner.kind }
+    func reset() { calls = [] }
+    func transcribe(samples: [Float]) throws -> String {
+        let text = try inner.transcribe(samples: samples)
+        calls.append(text)
+        return text
+    }
+}
+
 func errPrint(_ s: String) {
     FileHandle.standardError.write((s + "\n").data(using: .utf8)!)
 }
@@ -112,7 +127,13 @@ func devPadded(_ samples: [Float]) -> [Float] {
 
 do {
     let loadStart = Date()
-    let engine: any TranscriptionEngine = try TranscriptionEngines.load(modelPath: modelPath, engine: engineKind)
+    let loaded: any TranscriptionEngine = try TranscriptionEngines.load(modelPath: modelPath, engine: engineKind)
+    // Dev: SUSURRO_DEV_RECORD_RAW=<path> logs every raw engine transcript in
+    // call order (one JSON line per input file) so golden tests can replay a
+    // run with a scripted fake engine (BEA-664). Unset = no change.
+    let recordPath = ProcessInfo.processInfo.environment["SUSURRO_DEV_RECORD_RAW"]
+    let recorder = recordPath.map { _ in RecordingEngine(loaded) }
+    let engine: any TranscriptionEngine = recorder ?? loaded
     errPrint(String(format: "[%@ model loaded in %.2fs: %@]", engine.kind.rawValue, -loadStart.timeIntervalSinceNow, modelPath))
 
     // Bundled defaults only: a fresh temp path makes PostProcessor seed it
@@ -167,53 +188,19 @@ do {
         // marks decided from a joint clip. Prints one JSON object per file.
         for path in positional {
             let samples = try AudioFileLoader.loadSamples(url: URL(fileURLWithPath: path))
-            var config = PauseSegmenter.Config()
-            if let minPause { config.minPause = minPause }
-            var seg = PauseSegmenter(config: config)
-            var cuts: [PauseSegmenter.Cut] = []
-            var fed = 0
-            while fed < samples.count { // feed in 100 ms blocks like the pump
-                let end = min(samples.count, fed + 1600)
-                cuts += seg.append(Array(samples[fed..<end])); fed = end
+            recorder?.reset()
+            let r = try pipeline.replayHandsFree(samples, minPause: minPause)
+            if let recorder, let recordPath {
+                let line = try JSONSerialization.data(withJSONObject: ["file": (path as NSString).lastPathComponent,
+                                                                       "raw": recorder.calls], options: [.sortedKeys])
+                let h = FileHandle(forWritingAtPath: recordPath) ?? {
+                    FileManager.default.createFile(atPath: recordPath, contents: nil)
+                    return FileHandle(forWritingAtPath: recordPath)!
+                }()
+                h.seekToEndOfFile(); h.write(line + Data("\n".utf8)); h.closeFile()
             }
-            if let last = seg.finish(totalSamples: samples.count) { cuts.append(last) }
-            var joiner = HeldMarkJoiner()
-            var prev: DictationPipeline.ChunkAudio?
-            var start = 0
-            var chunkTexts: [String] = [], decisions: [String] = [], typed = ""
-            var jointSeconds = 0.0
-            for cut in cuts {
-                let s0 = HandsFreeJoin.trimmedStart(chunkStart: start, firstSpeech: cut.firstSpeech)
-                let chunk = Array(samples[s0..<cut.sample]); start = cut.sample
-                guard cut.hasSpeech else { continue }
-                let text = pipeline.clean(try engine.transcribe(samples: chunk))
-                guard !text.isEmpty else { continue }
-                chunkTexts.append(text)
-                let first = max(0, (cut.firstSpeech ?? s0) - s0)
-                let lastS = min(chunk.count, max(0, (cut.lastSpeech ?? cut.sample) - s0))
-                let current = DictationPipeline.ChunkAudio(samples: chunk, firstSpeech: first, lastSpeech: lastS)
-                let previous = prev
-                prev = current
-                var jointTime: Duration?
-                switch try pipeline.handsFreeStep(joiner.accept(text, pid: 1), previous: previous, current: current,
-                                                  jointSeconds: &jointTime) {
-                case .fresh(let t):
-                    // The app's text stage: after unmarked text, ContinuationCase.
-                    let ctx = InsertContext(before: typed.isEmpty ? nil : typed, source: .selfTracked)
-                    typed += (typed.isEmpty ? "" : " ") + (typed.isEmpty ? t : ContinuationCase().apply(t, ctx))
-                case .joined(_, let d, _, let joined):
-                    decisions.append("\(d)")
-                    typed += joined
-                case .unresolved:
-                    break
-                }
-                if let jointTime {
-                    jointSeconds += Double(jointTime.components.seconds) + Double(jointTime.components.attoseconds) / 1e18
-                }
-            }
-            if let m = joiner.stop() { typed.append(m) }
-            let out: [String: Any] = ["file": (path as NSString).lastPathComponent, "chunks": chunkTexts,
-                                      "decisions": decisions, "typed": typed, "jointSeconds": jointSeconds]
+            let out: [String: Any] = ["file": (path as NSString).lastPathComponent, "chunks": r.chunks,
+                                      "decisions": r.decisions, "typed": r.typed, "jointSeconds": r.jointSeconds]
             let data = try JSONSerialization.data(withJSONObject: out, options: [.sortedKeys])
             print(String(data: data, encoding: .utf8)!)
         }

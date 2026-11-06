@@ -1,0 +1,15 @@
+{"chunks": ["The meeting is at 3:30 p.m. on January 22nd."], "decisions": [], "file": "v01.wav", "typed": "The meeting is at 3:30 p.m. on January 22nd."}
+{"chunks": ["Can you call me at 9:45 a.m. tomorrow?"], "decisions": [], "file": "v02.wav", "typed": "Can you call me at 9:45 a.m. tomorrow?"}
+{"chunks": ["The invoice for one thousand two hundred and fifty is due on March 3rd."], "decisions": [], "file": "v03.wav", "typed": "The invoice for one thousand two hundred and fifty is due on March 3rd."}
+{"chunks": ["Our flight leaves at 6:15 a.m. on Friday, October 10th."], "decisions": [], "file": "v04.wav", "typed": "Our flight leaves at 6:15 a.m. on Friday, October 10th."}
+{"chunks": ["Revenue grew 18% to 4.2 million last quarter."], "decisions": [], "file": "v05.wav", "typed": "Revenue grew 18% to 4.2 million last quarter."}
+{"chunks": ["What time does the train leave on Saturday?"], "decisions": [], "file": "v06.wav", "typed": "What time does the train leave on Saturday?"}
+{"chunks": ["Set a reminder for 11 a.m. on December 1st."], "decisions": [], "file": "v07.wav", "typed": "Set a reminder for 11 a.m. on December 1st."}
+{"chunks": ["The server rebooted at two forty five", "This one's messed up. The server rebooted at 2:47 am and was down for 12 minutes."], "decisions": [], "file": "v08.wav", "typed": "The server rebooted at two forty five this one's messed up. The server rebooted at 2:47 am and was down for 12 minutes."}
+{"chunks": ["Did you send the report to the whole team?"], "decisions": [], "file": "v09.wav", "typed": "Did you send the report to the whole team?"}
+{"chunks": ["Rent goes up by 3% starting on April 1st."], "decisions": [], "file": "v10.wav", "typed": "Rent goes up by 3% starting on April 1st."}
+{"chunks": ["Deploy the Dagster pipeline and rerun the dbt models in Snowflake."], "decisions": [], "file": "v11.wav", "typed": "Deploy the Dagster pipeline and rerun the dbt models in Snowflake."}
+{"chunks": ["I'll be in Chicago from the 5th to the 9th of June."], "decisions": [], "file": "v12.wav", "typed": "I'll be in Chicago from the 5th to the 9th of June."}
+{"chunks": ["How long will the migration take?"], "decisions": [], "file": "v13.wav", "typed": "How long will the migration take?"}
+{"chunks": ["Thanks for sending that over so quickly."], "decisions": [], "file": "v14.wav", "typed": "Thanks for sending that over so quickly."}
+{"chunks": ["Let me know what you think."], "decisions": [], "file": "v15.wav", "typed": "Let me know what you think."}
