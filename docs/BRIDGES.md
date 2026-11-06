@@ -1,6 +1,9 @@
 # App bridges: target architecture (BEA-691)
 
-Status: **final recommendation, for board approval before implementation.**
+Status: **approved by the board (BEA-691) and implemented** on
+`feature/latch-v1`: steps 1–8 in commits 7cb60ba, 0a7a628, 531690a, 4d62045,
+c4c08b4, c43a0ef, bcc66be and the docs commit. Originally:
+**final recommendation, for board approval before implementation.**
 It reconciles my own review (first draft 731bf3f) with an independent review
 by a separate agent that saw only the code and the requirements (2026-11-06,
 read-only). Where the two differed, the reason for the choice is given in

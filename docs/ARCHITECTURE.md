@@ -148,8 +148,15 @@ Sources/
                               SelectionRange, EmptyValue, TextMarker, AnchoredValue,
                               AppBridge, Memory; InsertContext.resolve = first answer
                               wins; secure input → nothing read
-    EmacsServerProtocol.swift emacsclient line protocol (encode/decode) for the Emacs
-                              app bridge
+    Bridges/                  app bridges (docs/BRIDGES.md): AppBridge /
+                              ContextReadingBridge / LatchingBridge protocols;
+                              BridgeRegistry (the one list); LatchPolicy.engage
+                              (allowlist → bridge → pin, typed LatchRefusal);
+                              LatchSession (actor on its own serial queue: ordered
+                              calls, single failure, appended clipboard, release
+                              once); LatchToken (launch nonce); Transports/
+                              (UnixSocketClient, ProcessRunner); Emacs/, Obsidian/,
+                              AX/ — one folder per bridge (codec + bridge)
     CrossDictationJoin.swift  (BEA-677) eligibility guard for joining a dictation to
                               Susurro's previous one (Previous, Current, check,
                               worthDeciding, decide, edit, speechBounds, logLine):
@@ -226,10 +233,9 @@ Sources/
                               FieldSnapshot, off-main, capped via CappedRead at
                               Tuning.axReadCap (250 ms; nil on timeout); secure
                               fields never read; enables AX on Electron apps;
-                              consults AppBridges
-    AppBridges.swift          per-bundle-ID last-resort bridges; Emacs: one request
-                              on the running Emacs server's socket (~2-35 ms), never
-                              the minibuffer
+                              consults BridgeRegistry.standard.contextReader
+                              (Emacs: one request on the server socket, ~2-35 ms,
+                              never the minibuffer)
     TextHandlingLog.swift     per-app coverage file: DictationRecord.line for each
                               dictation that reached the insert step (lengths and
                               numbers only, never field text), rotated at 1 MB
@@ -313,22 +319,26 @@ The dev feed hook (`DevHooks`) enqueues a WAV the same way.
 ### Latch (BEA-691)
 
 ```
-hold PTT, tap mode key ×2 → HandsFreeMachine .requestLatch → hfRequestLatch
-                            LatchAllowlist.bundled (bundle ID → method; Codable for a
-                            later remote list) → LatchTargets.pin:
-                              org.gnu.Emacs → EmacsServerBridge.latchPin (marker,
-                                insertion type t, in the selected buffer)
-                              md.obsidian   → ObsidianCLI `version` gate (app version
-                                ≥ 1.14.5) + `eval` ObsidianLatchJS.pin (markdown leaf;
-                                CM6 EditorView.update wrapped once → ChangeSet.mapPos)
-                              anything else → pill "Latching isn't supported in <app>",
-                                .latchRefused → stays hands-free
-per chunk (same queue job)  context at the pin (off main) → InsertPlan from that
-                            context (source selfTracked: marks appended, never
-                            retracted) → LatchTarget.insert off main → exact read-back
-                            (LatchDelivery.verify); failure → clipboard + pill +
-                            .latchEnded → hands-free. Never the frontmost app.
-stop / discard / 3rd tap    end mark at the pin; marker/pin released; overlay cleared
+hold PTT, tap mode key ×2 → HandsFreeMachine .requestLatch → hfRequestLatch: the tap
+                            callback returns at once; on a GCD queue
+                            LatchPolicy.engage: LatchAllowlist.bundled (bundle ID →
+                            BridgeID; Codable) → BridgeRegistry → bridge.pin
+                              EmacsBridge    marker (insertion type t), selected buffer
+                              ObsidianBridge CLI `version` gate (app version ≥ 1.14.5,
+                                cached per pid) + `eval` pin (markdown leaf; CM6
+                                EditorView.update wrapped once → ChangeSet.mapPos)
+                              refused → bridge pill or "Latching isn't supported in
+                                <app>", .latchRefused → stays hands-free
+                            result applied on main only if the request is still
+                            current (LatchToken); a stale pin is released
+per chunk (same queue job)  LatchSession.context() starts while the chunk transcribes
+                            → InsertPlan from that context (source selfTracked: marks
+                            appended, never retracted) → LatchSession.deliver (exact
+                            read-back). First failure: pill + .latchEnded → hands-free;
+                            every undelivered chunk is appended to the clipboard; later
+                            calls never reach the app. Never the frontmost app.
+stop / discard / 3rd tap    end mark at the pin; session released (after any in-flight
+                            insert); overlay cleared
 overlay                     purple ring, target icon, "LATCH · App — document";
                             click (hands-free or latch) → stop and keep. Bare Esc not captured in latch;
                             PTT+Esc discards (stop fires on PTT release).
@@ -425,7 +435,7 @@ Task.detached — DictationPipeline:
 
 - Master toggle: Smart Spacing. Off → no AX read, sentence case only.
 - The app target only *collects* facts (`FocusedFieldReader` → `FieldSnapshot`,
-  `AppBridges`); all interpretation is pure code in SusurroCore
+  `BridgeRegistry` context readers); all interpretation is pure code in SusurroCore
   (`ContextProviders`, `TextHandling`) and is unit-tested.
 - Providers key on the field's shape, not on bundle IDs; adding an app class
   means adding a provider. App bridges are the only per-app code and run
