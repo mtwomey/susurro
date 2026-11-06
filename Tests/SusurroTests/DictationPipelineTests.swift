@@ -93,21 +93,33 @@ struct DictationPipelineTests {
         #expect(await pipeline.cleanDictation("") == "")
     }
 
-    /// Golden: `susurro-cli --handsfree` output captured on main c9eaa1e for
-    /// Fixtures/voice (the hands-free eval's source clips), replayed through
-    /// the pipeline with the recorded raw engine transcripts. The voice clips
-    /// are not committed (Matthew's voice); without them this is a no-op.
-    @Test func handsFreeReplayGolden() throws {
+    /// Golden: `susurro-cli --handsfree` outputs replayed through the
+    /// pipeline with the recorded raw engine transcripts and a fake engine.
+    /// - handsfree_voice: Fixtures/voice, captured on main c9eaa1e.
+    /// - handsfree_eval: the 41 stitched sessions from
+    ///   scripts/handsfree_join_eval.py (28 joins), set HF_EVAL_DIR to its
+    ///   out-dir to run them.
+    /// The audio is not committed (Matthew's voice); missing files are skipped.
+    @Test(arguments: [("handsfree_voice", "Fixtures/voice"), ("handsfree_eval", "$HF_EVAL_DIR")])
+    func handsFreeReplayGolden(_ name: String, _ dir: String) throws {
         let golden = repoRoot.appendingPathComponent("Fixtures/golden")
-        let expected = try String(contentsOf: golden.appendingPathComponent("handsfree_voice.jsonl"), encoding: .utf8)
-            .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
-        let raws = try String(contentsOf: golden.appendingPathComponent("handsfree_voice_raw.jsonl"), encoding: .utf8)
-            .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
-        #expect(expected.count == 15 && raws.count == 15)
+        func lines(_ f: String) throws -> [[String: Any]] {
+            try String(contentsOf: golden.appendingPathComponent(f), encoding: .utf8)
+                .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
+        }
+        let expected = try lines("\(name).jsonl"), raws = try lines("\(name)_raw.jsonl")
+        #expect(expected.count == raws.count && !expected.isEmpty)
+        let base: URL
+        if dir.hasPrefix("$") {
+            guard let env = ProcessInfo.processInfo.environment[String(dir.dropFirst())] else { return }
+            base = URL(fileURLWithPath: env)
+        } else {
+            base = repoRoot.appendingPathComponent(dir)
+        }
         for (exp, raw) in zip(expected, raws) {
             let file = exp["file"] as! String
             #expect(raw["file"] as? String == file)
-            let wav = repoRoot.appendingPathComponent("Fixtures/voice/\(file)")
+            let wav = base.appendingPathComponent(file)
             guard FileManager.default.fileExists(atPath: wav.path) else { continue }
             let engine = FakeEngine(.parakeet, transcripts: raw["raw"] as! [String])
             let pipeline = DictationPipeline(engine: engine, postProcessor: freshRules())

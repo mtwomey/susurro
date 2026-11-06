@@ -1,0 +1,41 @@
+{"file": "say_break_07.wav", "raw": ["Yes, that works for me.", "Send it to the team tomorrow morning.", "Yes, that works for me. Send it to the team tomorrow morning."]}
+{"file": "say_break_08.wav", "raw": ["The build is finally green.", "Let us ship it this afternoon.", "The build is finally green. Let us ship it this afternoon."]}
+{"file": "say_break_09.wav", "raw": ["Are you coming to lunch today?", "We are meeting at the usual place.", "Are you coming to lunch today? We are meeting at the usual place."]}
+{"file": "say_break_10.wav", "raw": ["Thanks for the quick reply.", "I will review the draft tonight.", "Thanks for the quick reply. I will review the draft tonight."]}
+{"file": "say_break_11.wav", "raw": ["The tests passed on my machine.", "Can you try them on yours?", "The tests passed on my machine. Can you try them on yours?"]}
+{"file": "say_break_12.wav", "raw": ["I fixed the login bug.", "The next release should go out on Monday.", "I fixed the login bug. The next release should go out on Monday."]}
+{"file": "say_mid_01.wav", "raw": ["So, I was thinking that we should probably move the deploy to Thursday because the tests are still flaky."]}
+{"file": "say_mid_02.wav", "raw": ["Can you send me the", "Quarterly report before the meeting on Friday."]}
+{"file": "say_mid_03.wav", "raw": ["I think the main problem with the new design is.", "That it takes too long to load.", "I think the main problem with the new design is that it takes too long to load."]}
+{"file": "say_mid_04.wav", "raw": ["We need to talk to the", "Vendor about the contract renewal."]}
+{"file": "say_mid_05.wav", "raw": ["Please make sure that", "Everyone has access to the shared folder."]}
+{"file": "say_mid_06.wav", "raw": ["The reason I'm asking is.", "Because the numbers do not add up.", "The reason I'm asking is because the numbers do not add up."]}
+{"file": "voice_break_01.wav", "raw": ["The meeting is at 3:30 p.m. on January 22nd. Can you call me at 9:45 a.m. tomorrow?"]}
+{"file": "voice_break_02.wav", "raw": ["Can you call me at 9:45 a.m. tomorrow?", "The invoice for one thousand two hundred and fifty is due on March 3rd.", "Can you call me at 9:45 a.m. to morrow? The invoice for one thousand two hundred and fifty is due on March 3rd."]}
+{"file": "voice_break_03.wav", "raw": ["The invoice for one thousand two hundred and fifty is due on March 3rd.", "Our flight leaves at 6:15 a.m. on Friday, October 10.", "For 1,250 is due on March 3rd. Our flight leaves at 6:15 a.m. on Friday, October 10th."]}
+{"file": "voice_break_04.wav", "raw": ["Our flight leaves at 6:15 a.m. on Friday, October 10th.", "Revenue grew 18% to four point two million last quarter.", "At 6:15 a.m. on Friday, October 10th. Revenue grew 18% to 4.2 million last quarter."]}
+{"file": "voice_break_05.wav", "raw": ["Revenue grew 18% to 4.2 million last quarter.", "What time does the train leave on Saturday?", "Grew 18% to 4.2 million last quarter. What time does the train leave on Saturday?"]}
+{"file": "voice_break_06.wav", "raw": ["What time does the train leave on Saturday?", "Set a reminder for 11 a.m. on December 1st.", "What time does the train leave on Saturday? Set a reminder for 11 a.m. on December 1st."]}
+{"file": "voice_break_07.wav", "raw": ["Set a reminder for 11 a.m. on December 1st.", "The server rebooted at two forty five", "Set a reminder for 11 a.m. on December 1st. The server rebooted at two forty five.", "This one's messed up. The server rebooted at 2:47 am and was down for 12 minutes."]}
+{"file": "voice_break_08.wav", "raw": ["The server rebooted at two forty five", "This one's messed up. The server rebooted at 2:47 am and was down for 12 minutes.", "Did you send the report to the whole team?", "Booted at 2:47 a.m. and was down for 12 minutes. Did you send the report to the whole team?"]}
+{"file": "voice_break_09.wav", "raw": ["Did you send the report to the whole team?", "Rent goes up by 3% starting on April 1st.", "Did you send the report to the whole team? Rent goes up by 3% starting on April 1st."]}
+{"file": "voice_break_10.wav", "raw": ["Rent goes up by 3% starting on April 1st.", "Deploy the Dagster pipeline and rerun the dbt models in Snowflake.", "Rent goes up by 3% starting on April 1st. Deploy the DAXR pipeline and rerun the DBT models in Snowflake."]}
+{"file": "voice_break_11.wav", "raw": ["Deploy the Dagster pipeline and rerun the dbt models in Snowflake.", "I'll be in Chicago from the 5th to the 9th of June.", "Pipeline and rerun the DBT models in Snowflake. I'll be in Chicago from the 5th to the 9th of June."]}
+{"file": "voice_break_12.wav", "raw": ["I'll be in Chicago from the 5th to the 9th of June.", "How long will the migration take?", "I'll be in Chicago from the 5th to the 9th of June. How long will the migration take?"]}
+{"file": "voice_break_13.wav", "raw": ["How long will the migration take?", "Thanks for sending that over so quickly.", "How long will the migration take? Thanks for sending that over so quickly."]}
+{"file": "voice_break_14.wav", "raw": ["Thanks for sending that over so quickly.", "Let me know what you think.", "Thanks for sending that over so quickly. Let me know what you think."]}
+{"file": "voice_mid_01.wav", "raw": ["The meeting is at 3:30 p.m.", "On January 22nd.", "The meeting is at 3:30 p.m. on January 22nd."]}
+{"file": "voice_mid_02.wav", "raw": ["Can you call me at 945?", "Bay him tomorrow.", "Can you call me at 9:45 a.m. tomorrow?"]}
+{"file": "voice_mid_03.wav", "raw": ["The invoice for one thousand two hundred and fifty", "Fifty is due on March 3rd."]}
+{"file": "voice_mid_04.wav", "raw": ["Our flight leaves at 6:15 a.m. on", "Friday, October 10th."]}
+{"file": "voice_mid_05.wav", "raw": ["Revenue grew 18% to 4.2 million last quarter."]}
+{"file": "voice_mid_06.wav", "raw": ["What time does", "The train leave on Saturday."]}
+{"file": "voice_mid_07.wav", "raw": ["Set a reminder for 11 a.m.", "Come on December 1st.", "Set a reminder for 11 a.m. on December 1st."]}
+{"file": "voice_mid_08.wav", "raw": ["The server rebooted at two forty five", "This one's messed up. The server rebooted at 2:47 a.m. and was down for twelve minutes."]}
+{"file": "voice_mid_09.wav", "raw": ["Did you send the report to the whole team?"]}
+{"file": "voice_mid_10.wav", "raw": ["The rent goes up by 3%.", "Starting on April 1st.", "Rent goes up by 3% starting on April 1st."]}
+{"file": "voice_mid_11.wav", "raw": ["Deploy the Dexter pipeline and rerun the DBT.", "T models in Snowflake.", "Deploy the Dexter pipeline and rerun the dbt models in Snowflake."]}
+{"file": "voice_mid_12.wav", "raw": ["I'll be in Chicago from the f.", "Fifth to the ninth of June.", "I'll be in Chicago from the 5th to the 9th of June."]}
+{"file": "voice_mid_13.wav", "raw": ["How long will the migration take?"]}
+{"file": "voice_mid_14.wav", "raw": ["Thanks for sending that over.", "So quickly.", "Thanks for sending that over so quickly."]}
+{"file": "voice_mid_15.wav", "raw": ["Let me know what you", "What do you think?"]}
