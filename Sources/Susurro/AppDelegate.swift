@@ -987,8 +987,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             let crossDecision = xDecision
             let joinText = joinedText
-            let joinAfter = heldBody
-            let prevShown = heldShown, prevMark = heldMark, decision = joinDecision
+            let join = InsertPlan.Join(joinedText: joinedText, previousBody: heldBody, previousShown: heldShown,
+                                       previousMark: heldMark, decision: joinDecision)
             let isHandsFree = hfChunk != nil
             let stageTimings = timings
             await MainActor.run { [weak self] in
@@ -1009,8 +1009,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     pasteboard.clearContents()
                     // A held mark travels with the copied words, never lost.
                     // (A mark already shown in the old field stays there.)
-                    let copied = prevShown ? processed
-                        : (joinText.map { $0.trimmingCharacters(in: .whitespaces) } ?? processed)
+                    let copied = InsertPlan.appSwitchClipboardText(processed: processed, join: join)
                     pasteboard.setString(copied, forType: .string)
                     self.hfJoiner.discard()
                     self.dictationMemory.clear()
@@ -1039,64 +1038,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 let stage = TextHandlingStage.standard(smartSpacing: self.smartSpacingEnabled,
                                                        autoCapitalize: autoCapitalize)
-                var text = stage.apply(processed, context)
-                var deleteCount = 0
-                // Shown-mark mode (board follow-up on BEA-657): marks are typed at
-                // the pause and retracted with one guarded Backspace only when the
-                // field is readable and the mark sits right before the cursor.
-                let readableField = [.accessibility, .anchoredValue, .appBridge].contains(context.source)
-                    && context.before != nil && !secureInputActive
-                if prevShown, joinText != nil, let joinAfter {
-                    if readableField, HandsFreeJoin.canRetract(before: context.before, mark: prevMark, previousBody: joinAfter) {
-                        let edit = HandsFreeJoin.joinedAfterShown(decision: decision, next: processed)
-                        deleteCount = edit.deleteBackward
-                        text = edit.text
-                    } else {
-                        // Cursor moved / unreadable: the shown mark stays; the
-                        // piece goes in as a fresh dictation (pre-BEA-657 result).
-                        slog("handsfree: shown mark not in place, join skipped")
-                    }
-                } else if let joinText, let joinAfter {
-                    // Type the join in place only if the cursor is still right
-                    // after the previous chunk's words. Unknown context (no AX,
-                    // no memory) counts as in place: the session's own typing is
-                    // the only thing that ran since. Moved cursor: B goes in as a
-                    // fresh dictation and A's held mark is dropped (never typed
-                    // at the wrong spot).
-                    if HandsFreeJoin.isInPlace(before: context.before, previousBody: joinAfter) { text = joinText } else { slog("handsfree: cursor moved, join skipped") }
-                }
-                var xLog = ""
-                if !isHandsFree, joinText == nil, let frontmostPID, let prev = self.xPrev {
-                    var position: ValuePosition?
-                    if context.source == .anchoredValue, let before = context.before, let value = fieldRead?.value {
-                        position = ValuePosition(caretOffset: (before as NSString).length,
-                                                 valueLength: (value as NSString).length)
-                    }
-                    let current = CrossDictationJoin.Current(pid: frontmostPID, fieldID: nil, startedAt: startedAt,
-                                                             before: readableField ? context.before : nil,
-                                                             after: context.after, position: position)
-                    let verdict = CrossDictationJoin.check(previous: prev.record, current: current)
-                    if case .eligible = verdict, let crossDecision, !text.isEmpty {
-                        let edit = CrossDictationJoin.edit(decision: crossDecision, next: text)
-                        deleteCount = edit.deleteBackward
-                        text = edit.text
-                    }
-                    xLog = " " + CrossDictationJoin.logLine(verdict: verdict,
-                                                            gap: startedAt.timeIntervalSince(prev.record.endedAt),
-                                                            decision: crossDecision)
-                }
+                // The insert decisions are pure (SusurroCore InsertPlan,
+                // BEA-664); this block only gathers facts and carries them out.
+                let plan = InsertPlan.make(
+                    processed: processed, join: join, isHandsFree: isHandsFree,
+                    expectedPID: expectedPID, frontmostPID: frontmostPID,
+                    context: context, stage: stage, secureInput: secureInputActive,
+                    heldMark: self.hfJoiner.held?.mark,
+                    cross: self.xPrev.map { ($0.record, crossDecision) },
+                    startedAt: startedAt, fieldValue: fieldRead?.value)
+                plan.notes.forEach { slog($0) }
+                guard case .insert(let text, let deleteCount) = plan.action else { return }
+                let showingMark = plan.markShown
                 let readDetail = fieldRead?.detail ?? (pendingFieldRead == nil ? "notRead" : "timeout")
                 // Logged once per dictation, after insertion, with per-stage
                 // timings (BEA-663, F8). Numbers only — never field text.
-                let logLine = "source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)\(xLog)"
+                let logLine = "source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)\(plan.crossLog)"
                 var lineTimings = stageTimings
-                // Show this piece's own end mark now if the field is readable;
-                // otherwise it stays held (typed at the next join or at stop).
-                var showingMark = false
-                if isHandsFree, readableField, let mark = self.hfJoiner.held?.mark, !text.isEmpty {
-                    text.append(mark)
-                    showingMark = true
-                }
                 guard !text.isEmpty else {
                     TextHandlingLog.record("\(logLine) \(lineTimings.logFields)")
                     return
