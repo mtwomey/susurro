@@ -70,7 +70,7 @@ final class HelpWindowController {
 
         heading("Hands-Free")
         body("""
-        For longer passages: hold your push-to-talk key, tap the latch key \
+        For longer passages: hold your push-to-talk key, tap the mode key \
         (default: Right Command; Right Option if push-to-talk is Right \
         Command), then let go and keep talking. The overlay turns blue and \
         says HANDS-FREE. Text is typed at each pause, with its full stop or \
@@ -79,8 +79,10 @@ final class HelpWindowController {
         case. Tap the push-to-talk \
         key to stop, or press Esc to discard what hasn't been typed yet. \
         Hands-free stops by itself after 60 seconds without speech, after \
-        two hours, or when you switch apps. Change the latch key in \
-        Hands-Free Latch Key.
+        two hours, or when you switch apps. Change the mode key in \
+        Mode Key (Hands-Free / Latch). Tap the mode key a second time while \
+        still holding for latch (supported apps only); a third tap returns \
+        to push-to-talk.
         """)
 
         heading("Start at Login")

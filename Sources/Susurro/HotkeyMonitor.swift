@@ -32,16 +32,16 @@ struct PTTKey: Sendable, Equatable {
         Settings().pttKeyID = id
     }
 
-    /// The hands-free latch key for a push-to-talk key (BEA-651): the saved
+    /// The mode key for a push-to-talk key (BEA-651/BEA-691): the saved
     /// preference unless it is the push-to-talk key, never the same key.
-    static func latch(for ptt: PTTKey) -> PTTKey {
+    static func modeKey(for ptt: PTTKey) -> PTTKey {
         let id = ModeKeyResolver.resolve(ptt: ptt.id,
-                                          preferred: Settings().latchKeyID)
+                                          preferred: Settings().modeKeyID)
         return all.first { $0.id == id } ?? all.first { $0.id != ptt.id }!
     }
 
-    static func saveLatch(_ key: PTTKey) {
-        Settings().latchKeyID = key.id
+    static func saveModeKey(_ key: PTTKey) {
+        Settings().modeKeyID = key.id
     }
 }
 
@@ -52,14 +52,14 @@ struct PTTKey: Sendable, Equatable {
 final class HotkeyMonitor {
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
-    /// Hands-free (BEA-651): the latch key went down.
+    /// The mode key went down (cycles push-to-talk → hands-free → latch).
     var onModeTap: (() -> Void)?
-    /// Hands-free: Esc pressed. Return true to swallow it (only while latched).
+    /// Hands-free: Esc pressed. Return true to swallow it (hands-free, or with push-to-talk in latch).
     var onEscape: (() -> Bool)?
 
-    /// The hands-free latch key; never the PTT key (see `PTTKey.latch(for:)`).
-    var latchKey: PTTKey = PTTKey.latch(for: PTTKey.saved())
-    private var latchIsDown = false
+    /// The mode key; never the PTT key (see `PTTKey.modeKey(for:)`).
+    var modeKey: PTTKey = PTTKey.modeKey(for: PTTKey.saved())
+    private var modeKeyIsDown = false
     private var escapeSwallowed = false
     private static let escapeKeyCode: Int64 = 53
 
@@ -124,7 +124,7 @@ final class HotkeyMonitor {
         tap = nil
         source = nil
         isDown = false
-        latchIsDown = false
+        modeKeyIsDown = false
         escapeSwallowed = false
     }
 
@@ -138,13 +138,13 @@ final class HotkeyMonitor {
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
-        // Hands-free latch key (a modifier other than the PTT key): report the
+        // Mode key (a modifier other than the PTT key): report the
         // press, always pass it through.
-        if type == .flagsChanged, keyCode == latchKey.keyCode, keyCode != key.keyCode,
-           let flag = latchKey.modifierFlag {
+        if type == .flagsChanged, keyCode == modeKey.keyCode, keyCode != key.keyCode,
+           let flag = modeKey.modifierFlag {
             let down = event.flags.contains(flag)
-            if down && !latchIsDown { latchIsDown = true; onModeTap?() }
-            else if !down { latchIsDown = false }
+            if down && !modeKeyIsDown { modeKeyIsDown = true; onModeTap?() }
+            else if !down { modeKeyIsDown = false }
             return false
         }
 

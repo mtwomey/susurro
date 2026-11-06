@@ -9,7 +9,7 @@ leaves your machine.
 
 - Hold **Right Option** (configurable) to record; release to transcribe & type
 - Hands-free for longer passages: while holding, tap **Right Command** (the
-  latch key; never the push-to-talk key), let go and keep talking — text is
+  mode key; never the push-to-talk key), let go and keep talking — text is
   typed at each pause. Tap push-to-talk to stop, Esc to discard. Stops by
   itself after 60 s without speech, 2 hours, or an app switch. A thinking
   pause mid-sentence no longer leaves a stray period: each piece is typed with
@@ -82,7 +82,7 @@ Access, or edit `SIGN_ID` in the Makefile.
 - **Rules** (spoken punctuation, jargon substitutions, regex): menu →
   **Edit Rules…** — changes apply on your next dictation
 - **Push-to-talk key**: menu → **Push-to-Talk Key**
-- **Hands-free latch key**: menu → **Hands-Free Latch Key** (offers only the
+- **Mode key** (hands-free, then latch): menu → **Mode Key (Hands-Free / Latch)** (offers only the
   keys that aren't push-to-talk)
 - **Models**: menu → **Model**; downloads go to
   `~/Library/Application Support/Susurro/models`. Picking a model you

@@ -13,7 +13,8 @@ public struct Settings: @unchecked Sendable {
         public static let smartSpacingEnabled = "smartSpacingEnabled"
         public static let devFeedHook = "DevFeedHook"
         public static let pttKeyID = "pttKeyID"
-        public static let latchKeyID = "latchKeyID"
+        /// Stored under the pre-rename name so upgrades keep the choice.
+        public static let modeKeyID = "latchKeyID"
         /// Owned by `ModelManager` (it keeps its own accessor); listed here so
         /// the whole defaults domain is visible in one place.
         public static let activeModelID = "activeModelID"
@@ -54,10 +55,10 @@ public struct Settings: @unchecked Sendable {
         nonmutating set { defaults.set(newValue, forKey: Key.pttKeyID) }
     }
 
-    /// Saved hands-free latch key id, nil when never chosen.
-    public var latchKeyID: String? {
-        get { defaults.string(forKey: Key.latchKeyID) }
-        nonmutating set { defaults.set(newValue, forKey: Key.latchKeyID) }
+    /// Saved mode key id (cycles push-to-talk → hands-free → latch), nil when never chosen.
+    public var modeKeyID: String? {
+        get { defaults.string(forKey: Key.modeKeyID) }
+        nonmutating set { defaults.set(newValue, forKey: Key.modeKeyID) }
     }
 }
 

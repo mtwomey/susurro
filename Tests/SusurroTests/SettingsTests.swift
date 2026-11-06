@@ -17,7 +17,7 @@ import Testing
         #expect(Settings.Key.smartSpacingEnabled == "smartSpacingEnabled")
         #expect(Settings.Key.devFeedHook == "DevFeedHook")
         #expect(Settings.Key.pttKeyID == "pttKeyID")
-        #expect(Settings.Key.latchKeyID == "latchKeyID")
+        #expect(Settings.Key.modeKeyID == "latchKeyID")
         #expect(Settings.Key.activeModelID == "activeModelID")
     }
 
@@ -28,7 +28,7 @@ import Testing
         #expect(!s.smartSpacingEnabled)
         #expect(!s.devFeedHook)
         #expect(s.pttKeyID == nil)
-        #expect(s.latchKeyID == nil)
+        #expect(s.modeKeyID == nil)
     }
 
     /// Values written by the old ad-hoc accessors are read back, and the
@@ -43,7 +43,7 @@ import Testing
         #expect(s.devFeedHook)
         s.copyToClipboard = true
         s.smartSpacingEnabled = true
-        s.latchKeyID = "rightControl"
+        s.modeKeyID = "rightControl"
         #expect(defaults.bool(forKey: "copyToClipboard"))
         #expect(defaults.bool(forKey: "smartSpacingEnabled"))
         #expect(defaults.string(forKey: "latchKeyID") == "rightControl")

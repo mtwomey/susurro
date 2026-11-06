@@ -156,11 +156,15 @@ Sources/
                               removes the previous "." only when every check proves
                               it is still the last thing before the cursor
     -- hands-free --
-    HandsFreeMachine.swift    hands-free state machine (idle/holding/latchedHeld/
-                              latched/…): key events + ticks in, effects out
-                              (startRecording, latched, stopAndInsert, cancel,
-                              warnAutoStop); idle 60 s / 2 h safety auto-stop;
-                              app switch stops. Pure value type, no clock/AppKit
+    HandsFreeMachine.swift    recording-mode machine (BEA-691): mode-key taps while
+                              PTT is held cycle push-to-talk → hands-free → latch;
+                              states idle/holding/handsFreeHeld/handsFree/latchHeld/
+                              latched/latchStopping/awaitingRelease; effects
+                              startRecording, handsFree, requestLatch, pushToTalk,
+                              stopAndInsert, cancel, warnAutoStop; latchRefused/
+                              latchEnded → hands-free; idle 60 s / 2 h auto-stop;
+                              app switch stops hands-free, not latch; bare Esc not
+                              captured in latch (PTT+Esc discards). Pure value type
     HandsFreeSession.swift    (R4) hands-free audio plumbing: AudioSource protocol;
                               pump (drain + segment → speech chunks, heardSpeech),
                               finish (flush the last segment), discard. Pure;
@@ -214,8 +218,8 @@ Sources/
                               GeneralPasteboard, SystemFrontmostApp (NSWorkspace +
                               secure-input state)
     HotkeyMonitor.swift       CGEventTap; PTTKey = modifier (flagsChanged) or regular
-                              key (keyDown/up, swallowed); latch key + Esc (Esc only
-                              swallowed while latched); auto re-enables disabled taps
+                              key (keyDown/up, swallowed); mode key + Esc (Esc only
+                              swallowed hands-free, or with PTT in latch); auto re-enables disabled taps
     TextInjector.swift        CGEvent unicode typing, 18-UTF16-unit chunks, Return for
                               newlines; deleteBackward (guarded shown-mark retraction)
     FocusedFieldReader.swift  Accessibility read of the focused element into a
@@ -298,7 +302,7 @@ key down (CGEventTap callback, main runloop)
       engine not ready → toast with EngineController.unavailableMessage
       AudioRecorder.start()          AVAudioEngine tap begins accumulating samples
       OverlayController.show()       non-activating panel; focus untouched
-key up (not latched)
+key up (push-to-talk mode)
   → .stopAndInsert → pttReleased: samples = recorder.stop(); overlay.hide()
   → insertionQueue.enqueue { dictation.transcribeAndInsert(samples,
         releasePID: frontmost, expectedPID: nil) }
@@ -306,10 +310,10 @@ key up (not latched)
 
 The dev feed hook (`DevHooks`) enqueues a WAV the same way.
 
-### Hands-free (latched)
+### Hands-free
 
 ```
-hold PTT, tap latch key   → HandsFreeMachine .latched → hfBegin
+hold PTT, tap mode key    → HandsFreeMachine .handsFree → hfBegin
                             remembers frontmost pid/bundle, fresh HandsFreeSession,
                             fresh HeldMarkJoiner on DictationController; 100 ms
                             Timer → hfPump; observes app activation

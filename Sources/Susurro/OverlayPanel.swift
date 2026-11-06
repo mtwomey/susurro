@@ -43,7 +43,7 @@ final class OverlayController {
     }
 
     /// Hands-free (BEA-651): blue outline, steady blue dot and a HANDS-FREE
-    /// caption, so a latched session never looks like hold-to-talk.
+    /// caption, so a hands-free session never looks like hold-to-talk.
     func setHandsFree(_ on: Bool) {
         waveform.handsFree = on
         waveform.needsDisplay = true
@@ -133,7 +133,7 @@ final class WaveformView: NSView {
         // Pulsing red record dot
         let dotDiameter: CGFloat = 10
         let pulse = 0.65 + 0.35 * abs(sin(Date().timeIntervalSinceReferenceDate * 2.2))
-        // Hold-to-talk: pulsing red. Hands-free: steady blue (latched).
+        // Hold-to-talk: pulsing red. Hands-free: steady blue.
         (handsFree ? NSColor.systemBlue : NSColor.systemRed.withAlphaComponent(pulse)).setFill()
         NSBezierPath(ovalIn: NSRect(
             x: 16, y: midY - dotDiameter / 2, width: dotDiameter, height: dotDiameter
