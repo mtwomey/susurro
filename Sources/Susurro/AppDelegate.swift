@@ -50,11 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // Hands-free (BEA-651). The machine decides; the rest is plumbing.
     private lazy var handsFree = tuning.makeHandsFreeMachine()
-    private lazy var segmenter = tuning.makeSegmenter()
-    private var hfBuffer: [Float] = []      // samples of the unfinished segment
-    private var hfBufferStart = 0           // absolute index of hfBuffer[0]
-    private var hfTotal = 0                 // samples drained this session
-    private var hfLastSpeech: Int?
+    private lazy var hfSession = HandsFreeSession(tuning: tuning)  // audio → chunks
     private var hfTimer: Timer?
     private var hfPID: pid_t?
     private var hfBundleID: String?
@@ -996,11 +992,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let app = NSWorkspace.shared.frontmostApplication
         hfPID = app?.processIdentifier
         hfBundleID = app?.bundleIdentifier
-        segmenter = tuning.makeSegmenter()
-        hfBuffer = []
-        hfBufferStart = 0
-        hfTotal = 0
-        hfLastSpeech = nil
+        hfSession = HandsFreeSession(tuning: tuning)
         hfJoiner = HeldMarkJoiner()
         hfPrevChunk = nil
         overlay.setHandsFree(true)
@@ -1023,35 +1015,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Drain new audio, cut at pauses, queue finished chunks, drive auto-stop.
     private func hfPump() {
         guard hfTimer != nil else { return }
-        hfFeed(recorder.takeAvailable())
-        if let last = segmenter.lastSpeechSample, last != hfLastSpeech {
-            hfLastSpeech = last
+        let pump = hfSession.pump(recorder)
+        pump.chunks.forEach(hfDispatch)
+        if pump.heardSpeech {
             overlay.setWarning(false)
             _ = hfEvent(.heardSpeech(at: now))
         }
         _ = hfEvent(.tick(at: now))
     }
 
-    private func hfFeed(_ samples: [Float]) {
-        guard !samples.isEmpty else { return }
-        hfBuffer.append(contentsOf: samples)
-        hfTotal += samples.count
-        for cut in segmenter.append(samples) { hfDispatch(cut) }
-    }
-
-    private func hfDispatch(_ cut: PauseSegmenter.Cut) {
-        let sample = cut.sample, hasSpeech = cut.hasSpeech
-        let n = sample - hfBufferStart
-        guard n > 0, n <= hfBuffer.count else { return }
-        // Drop a long pause's leading silence (BEA-657: 10-15 s thinking pauses).
-        let start = HandsFreeJoin.trimmedStart(chunkStart: hfBufferStart, firstSpeech: cut.firstSpeech)
-        let chunk = Array(hfBuffer[(start - hfBufferStart)..<n])
-        hfBuffer.removeFirst(n)
-        hfBufferStart = sample
-        let info = HFChunk(samples: chunk,
-                           firstSpeech: max(0, (cut.firstSpeech ?? start) - start),
-                           lastSpeech: min(chunk.count, max(0, (cut.lastSpeech ?? sample) - start)))
-        guard hasSpeech else { return }
+    private func hfDispatch(_ info: HFChunk) {
+        let chunk = info.samples
         slog("handsfree: chunk \(chunk.count) samples")
         let generation = hfGate.token
         let pid = hfPID, bundleID = hfBundleID
@@ -1069,13 +1043,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hfTimer = nil
         if let hfAppObserver { NSWorkspace.shared.notificationCenter.removeObserver(hfAppObserver) }
         hfAppObserver = nil
-        let rest = recorder.stop()
-        overlay.hide()
         if insert {
-            hfFeed(rest)
-            if let last = segmenter.finish(totalSamples: hfTotal) {
-                hfDispatch(last)
-            }
+            let chunks = hfSession.finish(recorder)
+            overlay.hide()
+            chunks.forEach(hfDispatch)
             // After the last chunk is typed, type its held end mark (BEA-657),
             // only if the same app is still frontmost.
             let generation = hfGate.token
@@ -1087,12 +1058,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.executor.typeHeldMark(self.hfJoiner.stop(), sessionPID: pid)
             }
         } else {
+            hfSession.discard(recorder)
+            overlay.hide()
             hfGate.cancel() // drop chunks not yet typed, incl. one mid-transcription
             hfJoiner.discard() // and the held mark with them
             hfPrevChunk = nil
         }
-        hfBuffer = []
-        slog("handsfree: ended insert=\(insert) reason=\(String(describing: reason)) samples=\(hfTotal)")
+        slog("handsfree: ended insert=\(insert) reason=\(String(describing: reason)) samples=\(hfSession.total)")
         switch reason {
         case .idle?: toast.show("Hands-free stopped — no speech for 60 s")
         case .safetyLimit?: toast.show("Hands-free stopped — 2-hour limit")
