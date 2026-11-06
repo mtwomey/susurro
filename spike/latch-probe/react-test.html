@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- BEA-689 criterion 4: does the page see AX-written / pid-posted text?
+     Serve locally:  python3 -m http.server 8799 --bind 127.0.0.1  (from this dir)
+     Open in Zen: http://127.0.0.1:8799/react-test.html
+     The log shows every `input` event and React's state; "React state" must match the DOM. -->
+<meta charset="utf-8"><title>latch-probe React test</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<body style="font:14px system-ui;margin:2em">
+<h3>Controlled input (React)</h3><div id="root"></div>
+<h3>contenteditable</h3><div id="ce" contenteditable style="border:1px solid #888;min-height:2em;padding:4px"></div>
+<h3>log</h3><pre id="log" style="background:#eee;padding:6px"></pre>
+<script>
+const log = m => { const l = document.getElementById('log'); l.textContent = (new Date().toISOString().slice(11,23)+' '+m+'\n'+l.textContent).slice(0,4000); };
+document.getElementById('ce').addEventListener('input', e => log(`ce input type=${e.inputType} text=${JSON.stringify(e.target.textContent)}`));
+function App() {
+  const [v, setV] = React.useState('');
+  React.useEffect(() => { window.__reactValue = v; document.title = 'R:' + v; }, [v]);
+  return React.createElement('div', null,
+    React.createElement('textarea', { id: 'ta', rows: 2, cols: 40, value: v,
+      onChange: e => { log(`react onChange ${JSON.stringify(e.target.value)}`); setV(e.target.value); } }),
+    React.createElement('div', { id: 'state' }, 'React state: ' + JSON.stringify(v)),
+    React.createElement('button', { onClick: () => { setV(v + ''); log(`rerender: DOM=${JSON.stringify(document.getElementById('ta').value)} state=${JSON.stringify(v)}`); } }, 'force re-render'));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script>
