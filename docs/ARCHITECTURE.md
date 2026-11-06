@@ -330,7 +330,7 @@ per chunk (same queue job)  context at the pin (off main) → InsertPlan from th
                             .latchEnded → hands-free. Never the frontmost app.
 stop / discard / 3rd tap    end mark at the pin; marker/pin released; overlay cleared
 overlay                     purple ring, target icon, "LATCH · App — document";
-                            click → Stop / Discard. Bare Esc not captured in latch;
+                            click (hands-free or latch) → stop and keep. Bare Esc not captured in latch;
                             PTT+Esc discards (stop fires on PTT release).
 ```
 

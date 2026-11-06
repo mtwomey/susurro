@@ -29,37 +29,22 @@ final class OverlayController {
         panel.contentView = waveform
     }
 
-    /// Overlay click while latched (BEA-691): Stop / Discard.
+    /// Overlay click (BEA-691): stop and keep. `onDiscard` is unused by the
+    /// overlay now (discard = push-to-talk + Esc); kept for callers.
     var onStop: (() -> Void)?
     var onDiscard: (() -> Void)?
 
     /// Latch (BEA-691): show the mode, the target app's icon and name and the
-    /// document/buffer name; clicking offers Stop / Discard. nil = not latched.
+    /// document/buffer name. A click stops and keeps (see setHandsFree). nil = not latched.
     func setLatch(icon: NSImage?, app: String, document: String) {
         let title = "\(app) — \(document)"
         waveform.latch = (icon, title.count > 30 ? String(title.prefix(29)) + "…" : title)
-        panel.ignoresMouseEvents = false
-        waveform.onClick = { [weak self] view, event in self?.showLatchMenu(view: view, event: event) }
         waveform.needsDisplay = true
     }
 
     func clearLatch() {
         waveform.latch = nil
-        waveform.onClick = nil
-        panel.ignoresMouseEvents = true
         waveform.needsDisplay = true
-    }
-
-    private func showLatchMenu(view: NSView, event: NSEvent) {
-        let menu = NSMenu()
-        let stop = NSMenuItem(title: "Stop", action: #selector(MenuTarget.fire(_:)), keyEquivalent: "")
-        let discard = NSMenuItem(title: "Discard", action: #selector(MenuTarget.fire(_:)), keyEquivalent: "")
-        let target = MenuTarget { [weak self] item in
-            if item.title == "Stop" { self?.onStop?() } else { self?.onDiscard?() }
-        }
-        for item in [stop, discard] { item.target = target; menu.addItem(item) }
-        objc_setAssociatedObject(menu, &MenuTarget.key, target, .OBJC_ASSOCIATION_RETAIN)
-        NSMenu.popUpContextMenu(menu, with: event, for: view)
     }
 
     func show() {
@@ -73,6 +58,8 @@ final class OverlayController {
         waveform.handsFree = false
         waveform.warning = false
         clearLatch()
+        panel.ignoresMouseEvents = true
+        waveform.onClick = nil
         panel.orderOut(nil)
     }
 
@@ -80,6 +67,10 @@ final class OverlayController {
     /// caption, so a hands-free session never looks like hold-to-talk.
     func setHandsFree(_ on: Bool) {
         waveform.handsFree = on
+        // Board (BEA-691): a single click on the overlay stops and keeps
+        // (hands-free or latch). Discard stays push-to-talk + Esc.
+        panel.ignoresMouseEvents = !on
+        waveform.onClick = on ? { [weak self] _, _ in self?.onStop?() } : nil
         waveform.needsDisplay = true
     }
 
@@ -222,13 +213,4 @@ final class WaveformView: NSView {
             ))
         }
     }
-}
-
-/// Bridges NSMenuItem target/action to a closure for the latch overlay menu.
-@MainActor
-final class MenuTarget: NSObject {
-    nonisolated(unsafe) static var key: UInt8 = 0
-    private let handler: (NSMenuItem) -> Void
-    init(_ handler: @escaping (NSMenuItem) -> Void) { self.handler = handler }
-    @objc func fire(_ sender: NSMenuItem) { handler(sender) }
 }
