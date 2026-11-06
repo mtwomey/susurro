@@ -15,6 +15,7 @@ import Foundation
 /// isn't requirable there). CM6 groups changes < 500 ms apart; latched
 /// chunks are cut at pauses, so each chunk is normally its own undo step.
 public enum ObsidianLatchJS {
+    public static let bundleID = "md.obsidian"
     public static let maxContext = 200
 
     /// JSON string literal for `text` (valid JavaScript).
@@ -99,6 +100,10 @@ public enum ObsidianLatchJS {
     public static let minimumVersion = [1, 14, 5]
     public static func supported(_ version: [Int]) -> Bool {
         version.lexicographicallyPrecedes(minimumVersion) == false
+    }
+
+    public static var versionPill: String {
+        "Latching needs Obsidian \(minimumVersion.map(String.init).joined(separator: ".")) or later"
     }
 
     public static let cliOffPill = "Latching in Obsidian needs Settings → General → Command line interface"

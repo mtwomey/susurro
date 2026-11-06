@@ -32,19 +32,11 @@ enum AppBridges {
 /// is never read — that is where Emacs reads passwords.
 struct EmacsServerBridge: AppBridge {
     let name = "emacs"
-    let bundleIDs: Set<String> = ["org.gnu.Emacs"]
+    let bundleIDs: Set<String> = [EmacsBridgeInfo.bundleID]
     var timeout: TimeInterval = 0.15
     var maxChars = 200
 
-    private var expression: String {
-        """
-        (let* ((w (selected-window)) (b (window-buffer w))) \
-        (if (minibufferp b) "SKIP" \
-        (with-current-buffer b (let ((p (window-point w))) \
-        (base64-encode-string (encode-coding-string \
-        (buffer-substring-no-properties (max (point-min) (- p \(maxChars))) p) 'utf-8) t)))))
-        """
-    }
+    private var expression: String { EmacsReadLisp.textBeforeCursor(maxChars: maxChars) }
 
     func socketPath() -> String? {
         var candidates: [String] = []
@@ -70,7 +62,7 @@ struct EmacsServerBridge: AppBridge {
     func latchPin(id: Int, appName: String) -> LatchPin? {
         guard case .value(let bufferName) = EmacsLatchLisp.decode(reply: rawEval(EmacsLatchLisp.pin(id: id), timeout: 0.5))
         else { return nil }
-        return LatchPin(method: .emacsServer, bundleID: "org.gnu.Emacs", appName: appName,
+        return LatchPin(method: .emacsServer, bundleID: EmacsBridgeInfo.bundleID, appName: appName,
                         documentName: bufferName, handle: String(id))
     }
 
@@ -303,12 +295,12 @@ enum LatchTargets {
             let cli = ObsidianCLI()
             guard let version = cli.appVersion() else { return .refused(pill: ObsidianLatchJS.cliOffPill) }
             guard ObsidianLatchJS.supported(version) else {
-                return .refused(pill: "Latching needs Obsidian 1.14.5 or later")
+                return .refused(pill: ObsidianLatchJS.versionPill)
             }
             guard let reply = cli.eval(ObsidianLatchJS.pin(id: nextID)), reply.ok == true else {
                 return notSupported   // not a markdown editor leaf
             }
-            let pin = LatchPin(method: .obsidianCLI, bundleID: "md.obsidian", appName: appName,
+            let pin = LatchPin(method: .obsidianCLI, bundleID: ObsidianLatchJS.bundleID, appName: appName,
                                documentName: reply.name ?? "note", handle: reply.path ?? "")
             return .pinned(ObsidianLatchTarget(pin: pin, cli: cli, id: nextID))
         case .axSelectedText?:

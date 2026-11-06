@@ -31,8 +31,8 @@ public struct LatchCapability: Sendable, Equatable, Codable {
 /// undo check passes (see docs); Notes stays off.
 public struct LatchAllowlist: Sendable, Equatable {
     public static let bundled = LatchAllowlist(entries: [
-        LatchCapability(bundleID: "md.obsidian", method: .obsidianCLI),
-        LatchCapability(bundleID: "org.gnu.Emacs", method: .emacsServer),
+        LatchCapability(bundleID: ObsidianLatchJS.bundleID, method: .obsidianCLI),
+        LatchCapability(bundleID: EmacsBridgeInfo.bundleID, method: .emacsServer),
     ])
 
     public var entries: [LatchCapability]
@@ -176,83 +176,5 @@ extension LatchDelivery {
         case .gone: return .failed(.targetGone)
         case .unavailable: return .failed(.bridgeUnavailable)
         }
-    }
-}
-
-/// Emacs Lisp for the Emacs latch (pure, so it is unit-tested). Text is
-/// always passed base64-encoded, never interpolated raw. The marker has
-/// insertion type t, so it advances past each insert and tracks the user's
-/// edits elsewhere in the buffer.
-public enum EmacsLatchLisp {
-    /// Marker variable names are generated here, never from user input.
-    public static func markerSymbol(_ id: Int) -> String { "susurro--latch-\(id)" }
-
-    /// Pin the selected window's buffer at its point. Replies base64 of
-    /// "<buffer name>", or SKIP for the minibuffer.
-    public static func pin(id: Int) -> String {
-        let sym = markerSymbol(id)
-        return """
-        (let* ((w (selected-window)) (b (window-buffer w))) \
-        (if (minibufferp b) "SKIP" \
-        (progn (defvar \(sym) nil) \
-        (setq \(sym) (with-current-buffer b (copy-marker (window-point w) t))) \
-        (base64-encode-string (encode-coding-string (buffer-name b) 'utf-8) t))))
-        """
-    }
-
-    /// Context before the marker; GONE if the buffer died.
-    public static func context(id: Int, maxChars: Int = 200) -> String {
-        let sym = markerSymbol(id)
-        return """
-        (let ((m (and (boundp '\(sym)) \(sym)))) \
-        (if (and (markerp m) (buffer-live-p (marker-buffer m))) \
-        (with-current-buffer (marker-buffer m) \
-        (base64-encode-string (encode-coding-string \
-        (buffer-substring-no-properties (max (point-min) (- m \(maxChars))) m) 'utf-8) t)) "GONE"))
-        """
-    }
-
-    /// Insert `text` at the marker. Replies base64 of the text now between
-    /// the old and new marker position (the read-back), or GONE.
-    public static func insert(id: Int, text: String) -> String {
-        let sym = markerSymbol(id)
-        let b64 = Data(text.utf8).base64EncodedString()
-        return """
-        (let ((m (and (boundp '\(sym)) \(sym)))) \
-        (if (and (markerp m) (buffer-live-p (marker-buffer m))) \
-        (with-current-buffer (marker-buffer m) \
-        (let ((p (marker-position m)) \
-        (txt (decode-coding-string (base64-decode-string "\(b64)") 'utf-8))) \
-        (save-excursion (goto-char m) (insert txt)) \
-        (base64-encode-string (encode-coding-string \
-        (buffer-substring-no-properties p m) 'utf-8) t))) "GONE"))
-        """
-    }
-
-    public enum Reply: Sendable, Equatable {
-        case value(String)
-        /// The buffer or marker is gone.
-        case gone
-        /// Minibuffer: never latch there.
-        case skip
-        /// No usable reply (server down, timeout, error).
-        case none
-    }
-
-    public static func decode(reply: String?) -> Reply {
-        guard let reply, let printed = EmacsServerProtocol.printedString(reply: reply) else { return .none }
-        if printed == "GONE" { return .gone }
-        if printed == "SKIP" { return .skip }
-        guard let data = Data(base64Encoded: printed), let text = String(data: data, encoding: .utf8) else { return .none }
-        return .value(text)
-    }
-
-    /// Release the marker when latch ends.
-    public static func release(id: Int) -> String {
-        let sym = markerSymbol(id)
-        return """
-        (progn (when (and (boundp '\(sym)) (markerp \(sym))) (set-marker \(sym) nil)) \
-        (makunbound '\(sym)) (base64-encode-string "OK" t))
-        """
     }
 }
