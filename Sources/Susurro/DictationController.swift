@@ -17,6 +17,9 @@ final class DictationController {
     /// Cross-dictation joins (BEA-677): the previous push-to-talk insertion
     /// and its audio, kept so the next dictation can decide its full stop.
     private var xPrev: (record: CrossDictationJoin.Previous, samples: [Float], lastSpeech: Int)?
+    /// Latch (BEA-691): a latched chunk could not be delivered. The app
+    /// copies `text`, shows the pill, and ends latch (stays hands-free).
+    var onLatchFailure: ((_ failure: LatchFailure, _ pin: LatchPin, _ text: String) -> Void)?
 
     private let engine: () -> EngineLease?
     private let cleaner: () -> (any TextCleaning)?
@@ -43,7 +46,8 @@ final class DictationController {
     func transcribeAndInsert(_ samples: [Float], releasePID: pid_t?, releaseBundleID: String?,
                                      expectedPID: pid_t?, hfChunk: HFChunk? = nil,
                                      hfToken: Int? = nil,
-                                     trigger: DictationRecord.Trigger? = nil) -> Task<Void, Never>? {
+                                     trigger: DictationRecord.Trigger? = nil,
+                                     latch: (any LatchTarget)? = nil) -> Task<Void, Never>? {
         // The lease pins the engine this dictation started with across a model
         // switch (R8): it finishes on the old engine, which is freed once the
         // last such job ends.
@@ -62,7 +66,9 @@ final class DictationController {
         // Smart Spacing is the stage's master toggle — off means no read and
         // the old context-free behaviour (sentence case only).
         var fieldTask: Task<(FieldSnapshot?, Duration), Never>?
-        if settings.smartSpacingEnabled, !IsSecureEventInputEnabled(), let pid = releasePID {
+        // Latched chunks take their context from the pinned target, never
+        // from the frontmost field.
+        if latch == nil, settings.smartSpacingEnabled, !IsSecureEventInputEnabled(), let pid = releasePID {
             fieldTask = Task.detached(priority: .userInitiated) {
                 let clock = ContinuousClock(), start = clock.now
                 let snapshot = await FocusedFieldReader.read(pid: pid, bundleID: releaseBundleID)
@@ -93,6 +99,8 @@ final class DictationController {
             // what precedes the cursor.
             let cleaned = await pipeline.cleanDictation(transcript)
             Log.transcript(raw: raw, cleaned: cleaned)
+            // Latch: context at the pin (off the main actor; socket/CLI trip).
+            let latchContext = latch?.context()
             let fieldResult = await pendingFieldRead?.value
             let fieldRead = fieldResult?.0
             timings.axRead = fieldResult?.1
@@ -157,6 +165,13 @@ final class DictationController {
                 guard !processed.isEmpty || joinText != nil else {
                     record.outcome = .empty
                     record.emit()
+                    return
+                }
+                if let latch {
+                    self.deliverLatched(processed: processed, join: join, latch: latch,
+                                        contextReply: latchContext ?? .unavailable,
+                                        engine: engine.kind, autoCapitalize: autoCapitalize,
+                                        startedAt: startedAt, record: record)
                     return
                 }
                 // Secure input (password fields) silently blocks synthetic typing —
@@ -258,6 +273,59 @@ final class DictationController {
                 }
                 if let toast = result.toast { self.toast.show(toast) }
             }
+        }
+    }
+
+    /// Latch delivery (BEA-691): plan the piece from the context at the pin,
+    /// insert through the target's bridge, verify the read-back. Any failure:
+    /// the text goes to the clipboard and latch ends — never another app.
+    /// Shown-mark mode is off here (context source is not "readable"), so a
+    /// held end mark is only ever appended, never retracted with Backspace.
+    private func deliverLatched(processed: String, join: InsertPlan.Join, latch: any LatchTarget,
+                                contextReply: LatchBridgeReply, engine: EngineKind,
+                                autoCapitalize: Bool, startedAt: Date, record: DictationRecord) {
+        var record = record
+        let fallback = InsertPlan.appSwitchClipboardText(processed: processed, join: join)
+        if let failure = LatchDelivery.contextFailure(contextReply), case .failed(let why) = failure {
+            joiner.discard()
+            onLatchFailure?(why, latch.pin, fallback)
+            record.outcome = .clipboardAppSwitch
+            record.emit()
+            return
+        }
+        guard case .value(let before) = contextReply else { return }
+        let context = InsertContext(before: before, source: .selfTracked, bundleID: latch.pin.bundleID,
+                                    engine: engine)
+        let stage = TextHandlingStage.standard(smartSpacing: settings.smartSpacingEnabled,
+                                               autoCapitalize: autoCapitalize)
+        let plan = InsertPlan.make(processed: processed, join: join, isHandsFree: true,
+                                   expectedPID: nil, frontmostPID: nil, context: context, stage: stage,
+                                   secureInput: false, heldMark: joiner.held?.mark, cross: nil,
+                                   startedAt: startedAt, fieldValue: nil)
+        guard case .insert(let text, _) = plan.action, !text.isEmpty else {
+            record.outcome = .nothingToType
+            record.emit()
+            return
+        }
+        let outcome = LatchDelivery.deliver(text, to: latch, contextBefore: before)
+        if case .failed(let why) = outcome {
+            joiner.discard()
+            onLatchFailure?(why, latch.pin, text)
+            record.outcome = .clipboardAppSwitch
+        } else {
+            record.outcome = .inserted
+            Log.handsfree.event("latch chunk delivered (\(text.count) chars)")
+        }
+        record.emit()
+    }
+
+    /// Latch stop: append the held end mark at the pin (never the frontmost app).
+    func finishLatched(_ latch: any LatchTarget) {
+        prevChunk = nil
+        guard let mark = joiner.stop() else { return }
+        let text = String(mark)
+        if case .failed(let why) = LatchDelivery.deliver(text, to: latch) {
+            onLatchFailure?(why, latch.pin, text)
         }
     }
 }

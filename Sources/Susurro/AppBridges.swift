@@ -128,3 +128,44 @@ struct EmacsServerBridge: AppBridge {
         return String(data: reply, encoding: .utf8)
     }
 }
+
+/// A latched Emacs buffer: the marker pinned by `EmacsServerBridge.latchPin`.
+final class EmacsLatchTarget: LatchTarget, @unchecked Sendable {
+    let pin: LatchPin
+    private let bridge: EmacsServerBridge
+
+    init(pin: LatchPin, bridge: EmacsServerBridge) {
+        self.pin = pin
+        self.bridge = bridge
+    }
+
+    private static func map(_ reply: EmacsLatchLisp.Reply) -> LatchBridgeReply {
+        switch reply {
+        case .value(let s): return .value(s)
+        case .gone: return .gone
+        case .skip, .none: return .unavailable
+        }
+    }
+
+    func context() -> LatchBridgeReply { Self.map(bridge.latchContext(pin)) }
+    func insert(_ text: String) -> LatchBridgeReply { Self.map(bridge.latchInsert(text, at: pin)) }
+    func release() { bridge.latchRelease(pin) }
+}
+
+@MainActor
+enum LatchTargets {
+    private static var nextID = Int(Date().timeIntervalSince1970) % 100_000
+    /// Pin the frontmost app's target if it is on the bundled allowlist and
+    /// its bridge can pin right now; nil = refuse (pill, stay hands-free).
+    static func pin(bundleID: String?, appName: String) -> (any LatchTarget)? {
+        switch LatchAllowlist.bundled.method(for: bundleID) {
+        case .emacsServer?:
+            nextID += 1
+            let bridge = EmacsServerBridge()
+            guard let pin = bridge.latchPin(id: nextID, appName: appName) else { return nil }
+            return EmacsLatchTarget(pin: pin, bridge: bridge)
+        case .obsidianCLI?, .axSelectedText?, nil:
+            return nil   // Obsidian bridge lands next (BEA-691 M5)
+        }
+    }
+}

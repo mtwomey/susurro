@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hfPID: pid_t?
     private var hfBundleID: String?
     private var hfAppObserver: NSObjectProtocol?
+    /// Latch (BEA-691): the pinned target, nil unless latched.
+    private var hfLatch: (any LatchTarget)?
     /// One FIFO for every insertion, push-to-talk and hands-free (BEA-665, R3).
     private let insertionQueue = InsertionQueue()
     /// Keystrokes, clipboard/secure-input/app-switch policy and the
@@ -134,6 +136,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkey.onPress = { [weak self] in guard let self else { return }; _ = self.hfEvent(.pttDown(at: self.now)) }
         hotkey.onRelease = { [weak self] in guard let self else { return }; _ = self.hfEvent(.pttUp(at: self.now)) }
         hotkey.onModeTap = { [weak self] in guard let self else { return }; _ = self.hfEvent(.modeTap(at: self.now)) }
+        dictation.onLatchFailure = { [weak self] failure, pin, text in
+            self?.hfLatchFailed(failure, pin: pin, text: text)
+        }
         hotkey.onEscape = { [weak self] in guard let self else { return false }; return self.hfEvent(.escape(at: self.now)) }
 
         if HotkeyMonitor.ensureAccessibility(prompt: true), hotkey.start() {
@@ -252,14 +257,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Latch v1 (BEA-691): engage only on allowlisted targets. Until a bridge
     /// pins the target, refuse with a pill and carry on in hands-free.
     private func hfRequestLatch() {
-        let name = NSWorkspace.shared.frontmostApplication?.localizedName ?? "this app"
-        toast.show("Latching isn't supported in \(name)")
-        Log.handsfree.event("latch refused")
-        _ = hfEvent(.latchRefused)
+        let app = NSWorkspace.shared.frontmostApplication
+        let name = app?.localizedName ?? "this app"
+        // Full support or nothing: allowlisted app whose bridge pins now.
+        guard hfTimer != nil, app?.processIdentifier == hfPID,
+              let target = LatchTargets.pin(bundleID: app?.bundleIdentifier, appName: name) else {
+            toast.show(LatchDelivery.notSupportedPill(appName: name))
+            Log.handsfree.event("latch refused")
+            _ = hfEvent(.latchRefused)
+            return
+        }
+        hfLatch = target
+        toast.show("Latched to \(target.pin.appName) — \(target.pin.documentName)")
+        Log.handsfree.event("latched method=\(target.pin.method.rawValue)")
+    }
+
+    /// Latch failed mid-session: keep the words (clipboard), say why, carry
+    /// on in hands-free. Never retried anywhere else.
+    private func hfLatchFailed(_ failure: LatchFailure, pin: LatchPin, text: String) {
+        if !text.isEmpty { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
+        toast.show(LatchDelivery.pillText(failure, pin: pin))
+        Log.handsfree.event("latch ended failure=\(failure)")
+        hfLatch?.release()
+        hfLatch = nil
+        _ = hfEvent(.latchEnded)
     }
 
     /// Back to push-to-talk while held: release any latch pin.
     private func hfDropLatch() {
+        hfLatch?.release()
+        hfLatch = nil
         Log.handsfree.event("push-to-talk")
     }
 
@@ -279,13 +306,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let chunk = info.samples
         Log.handsfree.event("chunk \(chunk.count) samples")
         let generation = dictation.gate.token
-        let pid = hfPID, bundleID = hfBundleID
+        let pid = hfPID, bundleID = hfBundleID, latch = hfLatch
         // Chunks are transcribed and typed strictly in order, in the same
         // queue as push-to-talk (BEA-665).
         insertionQueue.enqueue(isCurrent: { [weak self] in self?.dictation.gate.isCurrent(generation) ?? false }) {
             [weak self] in
             await self?.dictation.transcribeAndInsert(chunk, releasePID: pid, releaseBundleID: bundleID,
-                                            expectedPID: pid, hfChunk: info, hfToken: generation)?.value
+                                            expectedPID: pid, hfChunk: info, hfToken: generation,
+                                            latch: latch)?.value
         }
     }
 
@@ -301,19 +329,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // After the last chunk is typed, type its held end mark (BEA-657),
             // only if the same app is still frontmost.
             let generation = dictation.gate.token
-            let pid = hfPID
+            let pid = hfPID, latch = hfLatch
             insertionQueue.enqueue(isCurrent: { [weak self] in self?.dictation.gate.isCurrent(generation) ?? false }) {
                 [weak self] in
                 guard let self else { return }
+                if let latch {
+                    // Latched: the end mark goes to the pin, never the frontmost app.
+                    self.dictation.finishLatched(latch)
+                    latch.release()
+                    return
+                }
                 self.dictation.prevChunk = nil
                 self.executor.typeHeldMark(self.dictation.joiner.stop(), sessionPID: pid)
             }
+            hfLatch = nil
         } else {
             hfSession.discard(recorder)
             overlay.hide()
             dictation.gate.cancel() // drop chunks not yet typed, incl. one mid-transcription
             dictation.joiner.discard() // and the held mark with them
             dictation.prevChunk = nil
+            hfLatch?.release()
+            hfLatch = nil
         }
         Log.handsfree.event("ended insert=\(insert) reason=\(String(describing: reason)) samples=\(hfSession.total)")
         switch reason {

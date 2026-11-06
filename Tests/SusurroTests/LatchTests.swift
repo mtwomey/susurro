@@ -84,3 +84,44 @@ import Testing
         #expect(EmacsLatchLisp.release(id: 1).contains("set-marker susurro--latch-1 nil"))
     }
 }
+
+final class FakeLatchTarget: LatchTarget, @unchecked Sendable {
+    let pin = LatchPin(method: .emacsServer, bundleID: "org.gnu.Emacs", appName: "Emacs",
+                       documentName: "*scratch*", handle: "1")
+    var text = "Hello"
+    var alive = true
+    var reachable = true
+    var mangle = false
+    var released = false
+    func context() -> LatchBridgeReply {
+        guard reachable else { return .unavailable }
+        return alive ? .value(text) : .gone
+    }
+    func insert(_ s: String) -> LatchBridgeReply {
+        guard reachable else { return .unavailable }
+        guard alive else { return .gone }
+        text += s
+        return .value(mangle ? String(s.dropLast()) : s)
+    }
+    func release() { released = true }
+}
+
+@Suite struct LatchDeliverTests {
+    @Test func deliversAndVerifies() {
+        let t = FakeLatchTarget()
+        #expect(LatchDelivery.contextFailure(t.context()) == nil)
+        #expect(LatchDelivery.deliver(" world.", to: t) == .delivered)
+        #expect(t.text == "Hello world.")
+    }
+
+    @Test func goneUnavailableAndMismatchFail() {
+        let t = FakeLatchTarget()
+        t.mangle = true
+        #expect(LatchDelivery.deliver(" x", to: t) == .failed(.readBackMismatch))
+        t.alive = false
+        #expect(LatchDelivery.contextFailure(t.context()) == .failed(.targetGone))
+        #expect(LatchDelivery.deliver(" y", to: t) == .failed(.targetGone))
+        t.reachable = false
+        #expect(LatchDelivery.deliver(" z", to: t) == .failed(.bridgeUnavailable))
+    }
+}

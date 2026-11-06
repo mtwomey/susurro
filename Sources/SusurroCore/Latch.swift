@@ -134,6 +134,51 @@ public enum LatchDelivery {
     }
 }
 
+/// A bridge's answer about a latched target.
+public enum LatchBridgeReply: Sendable, Equatable {
+    case value(String)
+    /// The pinned buffer/note is gone.
+    case gone
+    /// No usable answer (server down, CLI off, timeout).
+    case unavailable
+}
+
+/// One pinned latch target, as the session sees it. Implemented per bridge in
+/// the app target (Emacs today, Obsidian next); fakes in tests. Calls block
+/// briefly (socket/CLI round trip).
+public protocol LatchTarget: AnyObject, Sendable {
+    var pin: LatchPin { get }
+    /// Text before the pinned position, for joins and spacing.
+    func context() -> LatchBridgeReply
+    /// Insert at the pinned position and advance it; replies with the text
+    /// now sitting where it was inserted (the read-back).
+    func insert(_ text: String) -> LatchBridgeReply
+    /// Let go of the pin (marker, position tracker).
+    func release()
+}
+
+extension LatchDelivery {
+    /// Insert `text` into the pinned target and verify the read-back.
+    public static func deliver(_ text: String, to target: any LatchTarget,
+                               contextBefore: String = "") -> Outcome {
+        switch target.insert(text) {
+        case .gone: return .failed(.targetGone)
+        case .unavailable: return .failed(.bridgeUnavailable)
+        case .value(let back):
+            return verify(sent: text, readBack: LatchReadBack(contextBefore: contextBefore, inserted: back))
+        }
+    }
+
+    /// Context failure before inserting: the outcome to report, nil if fine.
+    public static func contextFailure(_ reply: LatchBridgeReply) -> Outcome? {
+        switch reply {
+        case .value: return nil
+        case .gone: return .failed(.targetGone)
+        case .unavailable: return .failed(.bridgeUnavailable)
+        }
+    }
+}
+
 /// Emacs Lisp for the Emacs latch (pure, so it is unit-tested). Text is
 /// always passed base64-encoded, never interpolated raw. The marker has
 /// insertion type t, so it advances past each insert and tracks the user's
