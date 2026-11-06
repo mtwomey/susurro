@@ -153,6 +153,35 @@ final class DictationController {
             started.transcriptionFailed = transcriptionFailed
             started.app = releaseBundleID
             let recordBase = started
+            if let latch {
+                // Latch (BEA-691): plan on the main actor, insert through the
+                // bridge off it (socket/CLI round trip), report on it again.
+                // Still one queue job, so chunks land strictly in order.
+                let planned = await MainActor.run { [weak self] () -> (String, String, DictationRecord)? in
+                    guard let self else { return nil }
+                    var record = recordBase
+                    guard self.gate.isCurrent(hfToken) else {
+                        record.outcome = .dropped
+                        record.emit()
+                        return nil
+                    }
+                    guard !processed.isEmpty || joinText != nil else {
+                        record.outcome = .empty
+                        record.emit()
+                        return nil
+                    }
+                    return self.planLatched(processed: processed, join: join, latch: latch,
+                                            contextReply: latchContext ?? .unavailable,
+                                            engine: engine.kind, autoCapitalize: autoCapitalize,
+                                            startedAt: startedAt, record: record)
+                }
+                guard let (text, before, record) = planned else { return }
+                let outcome = LatchDelivery.deliver(text, to: latch, contextBefore: before)
+                await MainActor.run { [weak self] in
+                    self?.completeLatched(outcome, text: text, latch: latch, record: record)
+                }
+                return
+            }
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 var record = recordBase
@@ -165,13 +194,6 @@ final class DictationController {
                 guard !processed.isEmpty || joinText != nil else {
                     record.outcome = .empty
                     record.emit()
-                    return
-                }
-                if let latch {
-                    self.deliverLatched(processed: processed, join: join, latch: latch,
-                                        contextReply: latchContext ?? .unavailable,
-                                        engine: engine.kind, autoCapitalize: autoCapitalize,
-                                        startedAt: startedAt, record: record)
                     return
                 }
                 // Secure input (password fields) silently blocks synthetic typing —
@@ -281,9 +303,12 @@ final class DictationController {
     /// the text goes to the clipboard and latch ends — never another app.
     /// Shown-mark mode is off here (context source is not "readable"), so a
     /// held end mark is only ever appended, never retracted with Backspace.
-    private func deliverLatched(processed: String, join: InsertPlan.Join, latch: any LatchTarget,
-                                contextReply: LatchBridgeReply, engine: EngineKind,
-                                autoCapitalize: Bool, startedAt: Date, record: DictationRecord) {
+    /// Returns (text to insert, context before, record), or nil when there
+    /// is nothing to insert or the target already failed (handled here).
+    private func planLatched(processed: String, join: InsertPlan.Join, latch: any LatchTarget,
+                             contextReply: LatchBridgeReply, engine: EngineKind,
+                             autoCapitalize: Bool, startedAt: Date,
+                             record: DictationRecord) -> (String, String, DictationRecord)? {
         var record = record
         let fallback = InsertPlan.appSwitchClipboardText(processed: processed, join: join)
         if let failure = LatchDelivery.contextFailure(contextReply), case .failed(let why) = failure {
@@ -291,9 +316,9 @@ final class DictationController {
             onLatchFailure?(why, latch.pin, fallback)
             record.outcome = .clipboardAppSwitch
             record.emit()
-            return
+            return nil
         }
-        guard case .value(let before) = contextReply else { return }
+        guard case .value(let before) = contextReply else { return nil }
         let context = InsertContext(before: before, source: .selfTracked, bundleID: latch.pin.bundleID,
                                     engine: engine)
         let stage = TextHandlingStage.standard(smartSpacing: settings.smartSpacingEnabled,
@@ -305,9 +330,14 @@ final class DictationController {
         guard case .insert(let text, _) = plan.action, !text.isEmpty else {
             record.outcome = .nothingToType
             record.emit()
-            return
+            return nil
         }
-        let outcome = LatchDelivery.deliver(text, to: latch, contextBefore: before)
+        return (text, before, record)
+    }
+
+    private func completeLatched(_ outcome: LatchDelivery.Outcome, text: String, latch: any LatchTarget,
+                                 record: DictationRecord) {
+        var record = record
         if case .failed(let why) = outcome {
             joiner.discard()
             onLatchFailure?(why, latch.pin, text)
@@ -320,11 +350,12 @@ final class DictationController {
     }
 
     /// Latch stop: append the held end mark at the pin (never the frontmost app).
-    func finishLatched(_ latch: any LatchTarget) {
+    func finishLatched(_ latch: any LatchTarget) async {
         prevChunk = nil
         guard let mark = joiner.stop() else { return }
         let text = String(mark)
-        if case .failed(let why) = LatchDelivery.deliver(text, to: latch) {
+        let outcome = await Task.detached { LatchDelivery.deliver(text, to: latch) }.value
+        if case .failed(let why) = outcome {
             onLatchFailure?(why, latch.pin, text)
         }
     }

@@ -337,8 +337,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 if let latch {
                     // Latched: the end mark goes to the pin, never the frontmost app.
-                    self.dictation.finishLatched(latch)
-                    latch.release()
+                    await self.dictation.finishLatched(latch)
+                    await Task.detached { latch.release() }.value
                     return
                 }
                 self.dictation.prevChunk = nil
