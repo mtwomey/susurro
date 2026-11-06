@@ -31,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hfBundleID: String?
     private var hfAppObserver: NSObjectProtocol?
     /// Latch (BEA-691): the pinned target, nil unless latched.
-    private var hfLatch: (any LatchTarget)?
+    private var hfLatch: LatchSession?
     private var latchToken = Int(Date().timeIntervalSince1970) % 100_000
     /// One FIFO for every insertion, push-to-talk and hands-free (BEA-665, R3).
     private let insertionQueue = InsertionQueue()
@@ -148,8 +148,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.handsFree.reset()
             self.hfEnd(insert: false, reason: nil)
         }
-        dictation.onLatchFailure = { [weak self] failure, pin, text in
-            self?.hfLatchFailed(failure, pin: pin, text: text)
+        dictation.onLatchFailure = { [weak self] report, pin in
+            self?.hfLatchFailed(report, pin: pin)
         }
         hotkey.onEscape = { [weak self] in guard let self else { return false }; return self.hfEvent(.escape(at: self.now)) }
 
@@ -272,49 +272,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let app = NSWorkspace.shared.frontmostApplication
         let name = app?.localizedName ?? "this app"
         // Full support or nothing: allowlisted app whose bridge pins now.
-        // Step 5 (docs/BRIDGES.md) moves this off the tap callback.
+        // Pin off the main thread (docs/BRIDGES.md defect 1): the tap
+        // callback returns at once; the bridge talks to the app on a GCD
+        // queue; the result is applied only if this request is still current.
         latchToken += 1
-        let result: Result<any LatchTarget, LatchRefusal>
-        if hfTimer != nil, let app, app.processIdentifier == hfPID, let bundleID = app.bundleIdentifier {
-            result = LatchPolicy.engage(LatchPinRequest(pid: app.processIdentifier, bundleID: bundleID,
-                                                        appName: name, token: latchToken))
-        } else {
-            result = .failure(.notAllowlisted)
-        }
-        guard case .success(let target) = result else {
-            if case .failure(let refusal) = result {
-                toast.show(refusal.pill(appName: name))
-                Log.handsfree.event("latch refused \(refusal)")
-            }
+        let token = latchToken
+        guard hfTimer != nil, let app, app.processIdentifier == hfPID, let bundleID = app.bundleIdentifier else {
+            toast.show(LatchDelivery.notSupportedPill(appName: name))
+            Log.handsfree.event("latch refused (no hands-free target)")
             _ = hfEvent(.latchRefused)
             return
         }
-        hfLatch = target
-        overlay.setLatch(icon: app?.icon, app: target.pin.appName, document: target.pin.documentName)
-        toast.show("Latched to \(target.pin.appName) — \(target.pin.documentName)")
-        Log.handsfree.event("latched method=\(target.pin.method.rawValue)")
+        let request = LatchPinRequest(pid: app.processIdentifier, bundleID: bundleID, appName: name, token: token)
+        let icon = app.icon
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = LatchPolicy.engage(request)
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.hfLatchEngaged(result, token: token, icon: icon, appName: name) }
+            }
+        }
     }
 
-    /// Latch failed mid-session: keep the words (clipboard), say why, carry
-    /// on in hands-free. Never retried anywhere else.
-    private func hfLatchFailed(_ failure: LatchFailure, pin: LatchPin, text: String) {
-        if !text.isEmpty { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
+    private func hfLatchEngaged(_ result: Result<any LatchTarget, LatchRefusal>, token: Int,
+                                icon: NSImage?, appName: String) {
+        let current = token == latchToken && hfTimer != nil && handsFree.isLatched
+            && NSWorkspace.shared.frontmostApplication?.processIdentifier == hfPID
+        switch result {
+        case .success(let target) where current:
+            let session = LatchSession(target: target)
+            hfLatch = session
+            overlay.setLatch(icon: icon, app: target.pin.appName, document: target.pin.documentName)
+            toast.show("Latched to \(target.pin.appName) — \(target.pin.documentName)")
+            Log.handsfree.event("latched method=\(target.pin.method.rawValue)")
+        case .success(let target):
+            // Stale: the user moved on while the app answered. Let go.
+            Task { await LatchSession(target: target).release() }
+            Log.handsfree.event("latch pin arrived stale; released")
+        case .failure(let refusal):
+            guard token == latchToken, handsFree.isLatched else { return }
+            toast.show(refusal.pill(appName: appName))
+            Log.handsfree.event("latch refused \(refusal)")
+            _ = hfEvent(.latchRefused)
+        }
+    }
+
+    /// Latch failed: keep every undelivered word (the clipboard holds all of
+    /// them, appended), say why once, carry on in hands-free. Never retried
+    /// anywhere else.
+    private func hfLatchFailed(_ report: LatchSession.Report, pin: LatchPin) {
+        if let text = report.clipboardText {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
+        guard report.endedNow, case .failed(let failure) = report.outcome else { return }
         toast.show(LatchDelivery.pillText(failure, pin: pin))
         Log.handsfree.event("latch ended failure=\(failure)")
-        hfLatch?.release()
+        releaseLatch()
+        _ = hfEvent(.latchEnded)
+    }
+
+    /// Release off the main thread, ordered after any in-flight insert.
+    private func releaseLatch() {
+        if let session = hfLatch { Task { await session.release() } }
         hfLatch = nil
         overlay.clearLatch()
-        _ = hfEvent(.latchEnded)
     }
 
     /// Back to push-to-talk while held: release any latch pin.
     private func hfDropLatch() {
-        hfLatch?.release()
-        hfLatch = nil
-        overlay.clearLatch()
+        latchToken += 1   // a pin still in flight becomes stale
+        releaseLatch()
         Log.handsfree.event("push-to-talk")
     }
-
     /// Drain new audio, cut at pauses, queue finished chunks, drive auto-stop.
     private func hfPump() {
         guard hfTimer != nil else { return }
@@ -361,7 +390,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let latch {
                     // Latched: the end mark goes to the pin, never the frontmost app.
                     await self.dictation.finishLatched(latch)
-                    await Task.detached { latch.release() }.value
+                    await latch.release()
                     return
                 }
                 self.dictation.prevChunk = nil
@@ -374,8 +403,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dictation.gate.cancel() // drop chunks not yet typed, incl. one mid-transcription
             dictation.joiner.discard() // and the held mark with them
             dictation.prevChunk = nil
-            hfLatch?.release()
-            hfLatch = nil
+            latchToken += 1
+            releaseLatch()
         }
         Log.handsfree.event("ended insert=\(insert) reason=\(String(describing: reason)) samples=\(hfSession.total)")
         switch reason {
