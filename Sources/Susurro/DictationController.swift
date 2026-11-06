@@ -42,8 +42,12 @@ final class DictationController {
     @discardableResult
     func transcribeAndInsert(_ samples: [Float], releasePID: pid_t?, releaseBundleID: String?,
                                      expectedPID: pid_t?, hfChunk: HFChunk? = nil,
-                                     hfToken: Int? = nil) -> Task<Void, Never>? {
+                                     hfToken: Int? = nil,
+                                     trigger: DictationRecord.Trigger? = nil) -> Task<Void, Never>? {
         guard let engine = engine() else { return nil }
+        // One structured record per dictation (R7, F14): carries no text.
+        let baseRecord = DictationRecord(trigger: trigger ?? (hfChunk != nil ? .handsFree : .pushToTalk),
+                                         engine: engine.kind, outcome: .empty)
         let postProcessor = postProcessor
         // Transcript side of the dictation (BEA-664, R2): the same pipeline
         // susurro-cli runs, so the eval harness exercises this code.
@@ -66,11 +70,13 @@ final class DictationController {
             let clock = ContinuousClock()
             var timings = StageTimings()
             let transcript: String
+            var transcriptionFailed = false
             let transcribeStart = clock.now
             do {
                 transcript = try engine.transcribe(samples: samples)
             } catch {
-                slog("ptt: transcription FAILED: \(error)")
+                transcriptionFailed = true
+                Log.engine.failure("transcription failed: \(error)")
                 await MainActor.run { [weak self] in
                     self?.toast.show("Transcription failed — see log")
                 }
@@ -81,7 +87,7 @@ final class DictationController {
             // Sentence case is deferred to the pre-insert stage, which can see
             // what precedes the cursor.
             let cleaned = await pipeline.cleanDictation(transcript)
-            slog("ptt: transcript: \(raw) -> \(cleaned)")
+            Log.transcript(raw: raw, cleaned: cleaned)
             let fieldResult = await pendingFieldRead?.value
             let fieldRead = fieldResult?.0
             timings.axRead = fieldResult?.1
@@ -105,7 +111,7 @@ final class DictationController {
                                                          jointSeconds: &jointTime, failedJointAsEmpty: true)
                     if let jointTime { timings.joinTranscribe = jointTime }
                     if case .joined(let held, let decision, _, _)? = hfStep {
-                        slog("handsfree: join decision=\(decision) held=\(held.mark)")
+                        Log.handsfree.event("join decision=\(decision) held=\(held.mark)")
                     }
                 }
             }
@@ -129,14 +135,25 @@ final class DictationController {
             let join = InsertPlan.Join(hfStep)
             let joinText = join.joinedText
             let isHandsFree = hfChunk != nil
-            let stageTimings = timings
+            var started = baseRecord
+            started.timings = timings
+            started.transcriptionFailed = transcriptionFailed
+            started.app = releaseBundleID
+            let recordBase = started
             await MainActor.run { [weak self] in
                 guard let self else { return }
+                var record = recordBase
                 guard self.gate.isCurrent(hfToken) else {
-                    slog("handsfree: chunk dropped — session cancelled during transcription")
+                    Log.handsfree.event("chunk dropped — session cancelled during transcription")
+                    record.outcome = .dropped
+                    record.emit()
                     return
                 }
-                guard !processed.isEmpty || joinText != nil else { return }
+                guard !processed.isEmpty || joinText != nil else {
+                    record.outcome = .empty
+                    record.emit()
+                    return
+                }
                 // Secure input (password fields) silently blocks synthetic typing —
                 // in that case copy regardless of the setting so the words aren't lost.
                 let secureInputActive = IsSecureEventInputEnabled()
@@ -150,7 +167,9 @@ final class DictationController {
                     let message = self.executor.copyAfterAppSwitch(copied)
                     self.joiner.discard()
                     self.toast.show(message)
-                    slog("handsfree: chunk after app switch -> clipboard")
+                    Log.handsfree.event("chunk after app switch -> clipboard")
+                    record.outcome = .clipboardAppSwitch
+                    record.emit()
                     return
                 }
                 // Pre-insert text-handling stage (docs/TEXT_HANDLING_FINDINGS.md):
@@ -183,16 +202,24 @@ final class DictationController {
                     heldMark: self.joiner.held?.mark,
                     cross: self.xPrev.map { ($0.record, crossDecision) },
                     startedAt: startedAt, fieldValue: fieldRead?.value)
-                plan.notes.forEach { slog($0) }
-                guard case .insert(let text, let deleteCount) = plan.action else { return }
+                plan.notes.forEach { Log.textHandling.event($0) }
+                guard case .insert(let text, let deleteCount) = plan.action else {
+                    record.outcome = .notInserted
+                    record.emit()
+                    return
+                }
                 let showingMark = plan.markShown
-                let readDetail = fieldRead?.detail ?? (pendingFieldRead == nil ? "notRead" : "timeout")
                 // Logged once per dictation, after insertion, with per-stage
                 // timings (BEA-663, F8). Numbers only — never field text.
-                let logLine = "source=\(context.source.rawValue) provider=\(provider) app=\(releaseBundleID ?? "?") ax=\(readDetail) sameApp=\(frontmostPID == releasePID)\(plan.crossLog)"
-                var lineTimings = stageTimings
+                record.source = context.source
+                record.provider = provider
+                record.ax = fieldRead?.detail ?? (pendingFieldRead == nil ? "notRead" : "timeout")
+                record.sameApp = frontmostPID == releasePID
+                record.cross = plan.crossLog
                 guard !text.isEmpty else {
-                    TextHandlingLog.record("\(logLine) \(lineTimings.logFields)")
+                    record.outcome = .nothingToType
+                    record.emit()
+                    TextHandlingLog.record(record)
                     return
                 }
                 // Where the insertion ends inside a cursorless value, so the
@@ -210,9 +237,11 @@ final class DictationController {
                     text, deleteBackward: deleteCount, frontmostPID: frontmostPID,
                     secureInput: secureInputActive, copyToClipboard: self.settings.copyToClipboard,
                     position: position, continuesTail: context.source != .none)
-                if deleteCount > 0, frontmostPID != nil { slog("handsfree: retracted shown mark") }
-                lineTimings.insert = result.insertDuration
-                TextHandlingLog.record("\(logLine) \(lineTimings.logFields)")
+                if deleteCount > 0, frontmostPID != nil { Log.handsfree.event("retracted shown mark") }
+                record.timings.insert = result.insertDuration
+                record.outcome = .inserted
+                record.emit()
+                TextHandlingLog.record(record)
                 if showingMark && result.typed { self.joiner.markShown() }
                 if result.recorded, !isHandsFree, let frontmostPID,
                    let bounds = CrossDictationJoin.speechBounds(samples) {

@@ -30,7 +30,7 @@ final class DevHooks {
     ///   scripts/feed_wav.sh clip.wav   (posts com.susurro.dev.feedWAV, object = "<bundle id>|<path>")
     func install() {
         guard Settings().devFeedHook else { return }
-        slog("dev: feed-WAV hook enabled")
+        Log.dictation.event("feed-WAV hook enabled")
         installProbe()
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.susurro.dev.feedWAV"), object: nil, queue: .main
@@ -44,15 +44,15 @@ final class DevHooks {
                 guard let self else { return }
                 let app = NSWorkspace.shared.frontmostApplication
                 guard !expected.isEmpty, app?.bundleIdentifier == expected else {
-                    slog("dev: feed WAV refused — frontmost app is not the expected target")
+                    Log.dictation.event("feed WAV refused — frontmost app is not the expected target")
                     return
                 }
                 do {
                     let samples = try AudioFileLoader.loadSamples(url: URL(fileURLWithPath: path))
-                    slog("dev: feeding WAV (\(samples.count) samples)")
+                    Log.dictation.event("feeding WAV (\(samples.count) samples)")
                     self.feed(samples, app?.processIdentifier, app?.bundleIdentifier)
                 } catch {
-                    slog("dev: feed WAV failed: \(error)")
+                    Log.dictation.failure("feed WAV failed: \(error)")
                 }
             }
         }
@@ -131,7 +131,7 @@ final class DevHooks {
                     }
                 }
                 write()
-                slog("dev: context probe written")
+                Log.dictation.event("context probe written")
             }
         }
     }

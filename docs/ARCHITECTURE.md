@@ -1,8 +1,8 @@
 # Susurro — Architecture (as built)
 
 This file describes what actually exists on `main` after the 2026-11
-architecture review's refactors R0–R6 (checked against 9d0398b, after
-0.2.0-beta.3): push-to-talk, hands-free latching with pause-cut chunks and
+architecture review's refactors R0–R7 (R0–R6 checked against 9d0398b, after
+0.2.0-beta.3; R7 logging added by BEA-683): push-to-talk, hands-free latching with pause-cut chunks and
 joins, cross-dictation joins, the pre-insert text-handling stage, and the
 whisper.cpp + Parakeet engines. The review and its per-finding status are in
 `history/ARCHITECTURE_REVIEW_2026-11.md`; its open items are listed under
@@ -120,6 +120,14 @@ Sources/
                               CappedRead (real time cap on blocking work),
                               StageTimings (ms_ax / ms_transcribe / ms_join /
                               ms_insert log fields)
+    Logging.swift             (R7) Log: os.Logger per category (dictation, engine,
+                              handsfree, textHandling) under subsystem = bundle id
+                              (com.mtwomey.susurro); Logger.event/failure (public,
+                              text-free lines); Log.transcript (debug + private
+                              only). DictationRecord: the one structured record per
+                              dictation (trigger, engine, outcome, source/provider,
+                              app, AX detail, cross-join fields, StageTimings) —
+                              no text-carrying fields
     SpacingRule.swift         Smart Spacing decision logic: add a leading space whenever
                               resuming a dictation, unless the text before the cursor
                               already ends in whitespace (avoids doubling up). Pure
@@ -178,7 +186,7 @@ Sources/
                               permission flows, PTT press/release, hands-free
                               wiring (hfEvent/hfApply/hfBegin/hfPump/hfDispatch/
                               hfEnd: timer, app-switch observer, queueing);
-                              slog() = NSLog
+                              logging via SusurroCore Log (os.Logger, R7)
     DictationController.swift (R4) transcribeAndInsert — one dictation (PTT release,
                               hands-free chunk, dev feed), run inside an
                               InsertionQueue job: DictationPipeline off-main, then on
@@ -215,9 +223,9 @@ Sources/
     AppBridges.swift          per-bundle-ID last-resort bridges; Emacs: one request
                               on the running Emacs server's socket (~2-35 ms), never
                               the minibuffer
-    TextHandlingLog.swift     per-app coverage log (source/provider/AX detail +
-                              StageTimings — lengths and numbers only, never field
-                              text), rotated
+    TextHandlingLog.swift     per-app coverage file: DictationRecord.line for each
+                              dictation that reached the insert step (lengths and
+                              numbers only, never field text), rotated at 1 MB
     OverlayPanel.swift        recording pill: non-activating NSPanel (never steals
                               focus), waveform bars + timer, bottom-right
     ToastPanel.swift          transient acknowledgment toasts, top-right under menu bar
@@ -577,26 +585,30 @@ with `activeModelPath()` (nil = genuinely no model) when messaging users.
 
 ## Debug affordances
 
-- Run `./build/Susurro.app/Contents/MacOS/Susurro` directly from a terminal to
-  see stderr logs (via `open`/LaunchServices, NSLog content is TCC-redacted in
-  `log show`).
+- Logs are `os.Logger` (R7): `log stream --level info --predicate
+  'subsystem == "com.mtwomey.susurro"'` (categories dictation, engine,
+  handsfree, textHandling). Diagnostic lines are public and carry no user
+  text. Every dictation emits one `record trigger=… engine=… outcome=…
+  source=… provider=… app=… ax=… sameApp=… [xjoin…] ms_ax ms_transcribe
+  ms_join ms_insert` line in category dictation, whatever its outcome
+  (inserted, empty, nothingToType, notInserted, clipboardAppSwitch, dropped).
+  The transcript is logged only at debug level with `privacy: .private`
+  (redacted unless private logging is enabled); field text is never logged.
 - `susurro-cli <model.bin> Fixtures/*.wav` (or `--engine parakeet`) — corpus
   regression in seconds; `--post` shows raw vs post-processed text.
 - `scripts/ab_engines.py` — whisper vs Parakeet WER/latency A/B over
   `Fixtures/ab/references.tsv`.
-- `text-handling.log` (TextHandlingLog) has one line per dictation with
-  source/provider/AX detail and `ms_ax ms_transcribe ms_join ms_insert`.
+- `~/Library/Logs/Susurro/text-handling.log` (TextHandlingLog) is kept
+  (R7 decision): TEXT_HANDLING_FINDINGS.md and HANDSFREE_JOINS.md read
+  per-app coverage from it and it outlives unified-log retention. It holds
+  the same `DictationRecord` line (timestamped) for each dictation that
+  reached the insert step; the unified log has every dictation.
 - Dev hooks (`defaults write <bundle id> DevFeedHook -bool YES`):
   `scripts/feed_wav.sh clip.wav` dictates a WAV into the frontmost app;
   `scripts/context_probe.py` runs the pre-insert pipeline without typing.
 
-## Known open items (after R0–R6)
+## Known open items (after R0–R7)
 
-- **R7 — logging (F14).** Move to `os.Logger` with a subsystem and one
-  structured per-dictation record (stages, timings, source/provider, never
-  field text), replacing NSLog and TextHandlingLog. NSLog is still used by
-  `slog` (AppDelegate.swift:7) and directly in SusurroCore
-  (e.g. ModelManager.swift:155, PostProcessor, TranscriptCleaner).
 - **R8 — model-swap memory policy (F7).** During a switch the old engine
   stays resident until queued dictations that captured it finish; make that
   a deliberate, logged policy only if memory complaints come in.

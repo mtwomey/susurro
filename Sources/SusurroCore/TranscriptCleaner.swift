@@ -80,19 +80,19 @@ public final class TranscriptCleaner: TextCleaning, @unchecked Sendable {
                 options: GenerationOptions(sampling: .greedy)
             )
             let cleaned = response.content.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            NSLog("[susurro] cleanup: %.2fs", -t0.timeIntervalSinceNow)
+            Log.engine.event(String(format: "cleanup: %.2fs", -t0.timeIntervalSinceNow))
             // Sanity guard: a corrective pass shouldn't change length drastically.
             // If it did, the model went off-script — prefer the raw transcript.
             guard !cleaned.isEmpty,
                   cleaned.count > text.count / 2,
                   cleaned.count < text.count * 2
             else {
-                NSLog("[susurro] cleanup output failed sanity check — using raw text")
+                Log.engine.event("cleanup output failed sanity check — using raw text")
                 return nil
             }
             return cleaned
         } catch {
-            NSLog("[susurro] cleanup failed: %@", String(describing: error))
+            Log.engine.failure("cleanup failed: \(error)")
             return nil
         }
     }
