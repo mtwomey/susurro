@@ -334,6 +334,11 @@ overlay                     purple ring, target icon, "LATCH · App — document
                             PTT+Esc discards (stop fires on PTT release).
 ```
 
+TextEdit (AXSelectedTextLatchTarget) is built but OFF: the in-app undo check
+(BEA-691, new untitled document, two chunks written from the background with
+Zen frontmost, read-back exact) showed one Cmd+Z removes *all* latched chunks
+at once ("Base alpha. beta." → "Base"); further Cmd+Z did nothing. Not
+corrupt, but a single undo erasing a whole latch session fails "sane".
 Undo in Obsidian: `isolateHistory` is not reachable from `eval`; CM6's
 500 ms grouping applies and chunks are cut at pauses. Opt-in live tests on
 scratch targets: `SUSURRO_EMACS_IT=1` / `SUSURRO_OBSIDIAN_IT=1 swift test`.
