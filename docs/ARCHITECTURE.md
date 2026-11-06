@@ -272,9 +272,38 @@ Task.detached:
 
 `TranscriptionEngine` (Sendable, warm after init, `transcribe([Float]) → String`
 on 16 kHz mono Float32, serialized internally, exposes `kind`) is the only thing
-the app and CLI hold. `TranscriptionEngines.load(modelPath:engine:)` builds the
-right one from the catalog `EngineKind` (the app passes it) or infers it from the
-path (directory = Parakeet, file = whisper; the CLI relies on this).
+the app and CLI hold. `TranscriptionEngines.load(modelPath:engine:)` calls the
+`EngineKind.descriptor.load` closure for the catalog kind (the app passes it) or
+infers the kind from the path's shape (directory = first directory engine =
+Parakeet, file = whisper; the CLI relies on this).
+
+`Sources/SusurroCore/EngineCatalog.swift` (review R6) is the one place each
+engine is described: `EngineKind`, and per kind an `EngineDescriptor` with the
+menu section title, `EngineCapabilities` (artifact file/directory, Apple
+Silicon only, punctuation, ITN, prompt support, streaming, bracket tokens), the
+CLI's default model id and extra lookup paths, and the loader. Callers branch
+on capabilities (`TranscriptFilter` on `emitsBracketTokens`, `ModelManager` on
+`artifact` and `requiresAppleSilicon`), never on `engine == .x`.
+
+### Adding an engine
+
+1. Write `Sources/SusurroCore/<Name>Engine.swift` conforming to
+   `TranscriptionEngine` (warm init from a model path, serialized
+   `transcribe`, trimmed plain text, `kind` returns the new case).
+2. In `EngineCatalog.swift`, add the `EngineKind` case (declaration order =
+   menu order and `kind(ofPath:)` search order) and its `descriptor`:
+   capabilities, menu title, default model id, loader. The compiler's
+   exhaustive switch points to nothing else.
+3. Add the model(s) to `ModelManager.catalog` (`storageName`, `repo`,
+   `approxMB`, and `requiredEntries` for directory artifacts). File artifacts
+   use the single-file downloader, directories the per-entry one.
+4. If the new engine needs behaviour no existing capability covers, add a
+   capability flag and branch on it; don't add `kind ==` checks. Two
+   directory engines can't be told apart by `kind(ofPath:)`, so CLI users
+   pass `--engine` (or `--model` plus the catalog kind) for the second one.
+5. Tests: `EngineCatalogTests` checks every descriptor against the catalog
+   and runs the filter tests for every `EngineKind.allCases`; add the
+   engine's own load/transcribe tests next to `ParakeetEngineTests`.
 
 | Catalog id | Engine | Storage | Approx size | Notes |
 |---|---|---|---|---|

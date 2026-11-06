@@ -17,8 +17,8 @@ public protocol TranscriptionEngine: AnyObject, Sendable {
     /// Sample rate, in Hz, that `transcribe(samples:)` expects.
     static var sampleRate: Int { get }
 
-    /// Which backend this is, so engine-specific output filtering
-    /// (`TranscriptFilter`) can be applied by the caller.
+    /// Which backend this is; callers use `kind.capabilities` (e.g.
+    /// `TranscriptFilter`) rather than comparing kinds.
     var kind: EngineKind { get }
 
     func transcribe(samples: [Float]) throws -> String
@@ -35,16 +35,17 @@ public enum TranscriptionEngines {
     /// when the catalog kind is known; otherwise it is inferred from the path.
     /// Blocking and potentially slow; call it off the main thread.
     public static func load(modelPath: String, engine: EngineKind? = nil) throws -> any TranscriptionEngine {
-        switch engine ?? kind(ofPath: modelPath) {
-        case .whisper: return try WhisperEngine(modelPath: modelPath)
-        case .parakeet: return try ParakeetEngine(modelDirectory: URL(fileURLWithPath: modelPath, isDirectory: true))
-        }
+        try (engine ?? kind(ofPath: modelPath)).descriptor.load(modelPath)
     }
 
-    /// Directory = Core ML (Parakeet), anything else = ggml file (whisper).
+    /// The first engine (declaration order) whose artifact shape matches the
+    /// path: directory = Core ML (Parakeet), anything else = ggml file
+    /// (whisper). Shape alone can't tell two directory engines apart, so a
+    /// caller that knows the catalog kind should pass it to `load`.
     public static func kind(ofPath path: String) -> EngineKind {
         var isDir: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDir)
-        return exists && isDir.boolValue ? .parakeet : .whisper
+        let shape: EngineCapabilities.Artifact = exists && isDir.boolValue ? .directory : .file
+        return EngineKind.allCases.first { $0.capabilities.artifact == shape } ?? .whisper
     }
 }
