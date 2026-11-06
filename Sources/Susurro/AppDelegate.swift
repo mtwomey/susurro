@@ -57,7 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hfPID: pid_t?
     private var hfBundleID: String?
     private var hfAppObserver: NSObjectProtocol?
-    private var hfInsertChain: Task<Void, Never>?
+    /// One FIFO for every insertion, push-to-talk and hands-free (BEA-665, R3).
+    private let insertionQueue = InsertionQueue()
+    private let inserter = KeystrokeInserter()
+    private let frontmostApp = SystemFrontmostApp()
     // Cancel (Esc) moves the gate on: queued chunks are dropped, and a chunk
     // already mid-transcription is dropped at insert time (BEA-663, F2).
     private var hfGate = SessionGate()
@@ -746,8 +749,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         overlay.hide()
         slog("ptt: stopped (\(samples.count) samples), transcribing")
         let releaseApp = NSWorkspace.shared.frontmostApplication
-        transcribeAndInsert(samples, releasePID: releaseApp?.processIdentifier,
-                            releaseBundleID: releaseApp?.bundleIdentifier, expectedPID: nil)
+        let pid = releaseApp?.processIdentifier, bundleID = releaseApp?.bundleIdentifier
+        // Queued behind any earlier dictation (PTT or a hands-free tail), so
+        // quick releases type in order (BEA-665, F3).
+        insertionQueue.enqueue { [weak self] in
+            await self?.transcribeAndInsert(samples, releasePID: pid, releaseBundleID: bundleID,
+                                            expectedPID: nil)?.value
+        }
     }
 
     /// Dev hook (BEA-677): feed a WAV into the running app instead of the
@@ -776,8 +784,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 do {
                     let samples = try AudioFileLoader.loadSamples(url: URL(fileURLWithPath: path))
                     slog("dev: feeding WAV (\(samples.count) samples)")
-                    self.transcribeAndInsert(samples, releasePID: app?.processIdentifier,
-                                             releaseBundleID: app?.bundleIdentifier, expectedPID: nil)
+                    let pid = app?.processIdentifier, bundleID = app?.bundleIdentifier
+                    self.insertionQueue.enqueue { [weak self] in
+                        await self?.transcribeAndInsert(samples, releasePID: pid, releaseBundleID: bundleID,
+                                                        expectedPID: nil)?.value
+                    }
                 } catch {
                     slog("dev: feed WAV failed: \(error)")
                 }
@@ -1044,11 +1055,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 let insertStart = ContinuousClock.now
                 if deleteCount > 0, let frontmostPID {
-                    TextInjector.deleteBackward(deleteCount)
+                    self.inserter.deleteBackward(deleteCount)
                     self.dictationMemory.recordDeletedBackward(deleteCount, inPID: frontmostPID)
                     slog("handsfree: retracted shown mark")
                 }
-                let typed = TextInjector.type(text)
+                let typed = self.inserter.type(text)
                 lineTimings.insert = ContinuousClock.now - insertStart
                 TextHandlingLog.record("\(logLine) \(lineTimings.logFields)")
                 if showingMark && typed { self.hfJoiner.markShown() }
@@ -1185,15 +1196,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                            lastSpeech: min(chunk.count, max(0, (cut.lastSpeech ?? sample) - start)))
         guard hasSpeech else { return }
         slog("handsfree: chunk \(chunk.count) samples")
-        let previous = hfInsertChain
         let generation = hfGate.token
         let pid = hfPID, bundleID = hfBundleID
-        // Chunks are transcribed and typed strictly in order.
-        hfInsertChain = Task { @MainActor [weak self] in
-            await previous?.value
-            guard let self, self.hfGate.isCurrent(generation) else { return }
-            await self.transcribeAndInsert(chunk, releasePID: pid, releaseBundleID: bundleID,
-                                           expectedPID: pid, hfChunk: info, hfToken: generation)?.value
+        // Chunks are transcribed and typed strictly in order, in the same
+        // queue as push-to-talk (BEA-665).
+        insertionQueue.enqueue(isCurrent: { [weak self] in self?.hfGate.isCurrent(generation) ?? false }) {
+            [weak self] in
+            await self?.transcribeAndInsert(chunk, releasePID: pid, releaseBundleID: bundleID,
+                                            expectedPID: pid, hfChunk: info, hfToken: generation)?.value
         }
     }
 
@@ -1211,18 +1221,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             // After the last chunk is typed, type its held end mark (BEA-657),
             // only if the same app is still frontmost.
-            let previous = hfInsertChain
             let generation = hfGate.token
             let pid = hfPID
-            hfInsertChain = Task { @MainActor [weak self] in
-                await previous?.value
-                guard let self, self.hfGate.isCurrent(generation) else { return }
+            insertionQueue.enqueue(isCurrent: { [weak self] in self?.hfGate.isCurrent(generation) ?? false }) {
+                [weak self] in
+                guard let self else { return }
                 self.hfPrevChunk = nil
-                guard let mark = self.hfJoiner.stop() else { return }
-                let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
-                guard let pid, front == pid, !IsSecureEventInputEnabled() else { return }
-                if TextInjector.type(String(mark)) {
-                    self.dictationMemory.recordTyped(String(mark), intoPID: pid)
+                if let typed = HeldMarkTail.type(mark: self.hfJoiner.stop(), sessionPID: pid,
+                                                 frontmost: self.frontmostApp, inserter: self.inserter),
+                   let pid {
+                    self.dictationMemory.recordTyped(typed, intoPID: pid)
                 }
             }
         } else {
@@ -1284,3 +1292,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 /// One hands-free chunk's audio plus where its speech starts/ends (relative
 /// sample indices), kept so the next chunk can build a joint clip (BEA-657).
 typealias HFChunk = DictationPipeline.ChunkAudio
+
+/// The real Inserter: CGEvent keystrokes via TextInjector (BEA-665).
+@MainActor
+final class KeystrokeInserter: Inserter {
+    func type(_ text: String) -> Bool { TextInjector.type(text) }
+    func deleteBackward(_ count: Int) { TextInjector.deleteBackward(count) }
+}
+
+/// The real FrontmostAppProvider: NSWorkspace + Carbon secure-input state.
+@MainActor
+final class SystemFrontmostApp: FrontmostAppProvider {
+    var frontmostPID: pid_t? { NSWorkspace.shared.frontmostApplication?.processIdentifier }
+    var secureInputActive: Bool { IsSecureEventInputEnabled() }
+}
