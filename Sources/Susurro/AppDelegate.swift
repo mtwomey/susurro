@@ -136,6 +136,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkey.onPress = { [weak self] in guard let self else { return }; _ = self.hfEvent(.pttDown(at: self.now)) }
         hotkey.onRelease = { [weak self] in guard let self else { return }; _ = self.hfEvent(.pttUp(at: self.now)) }
         hotkey.onModeTap = { [weak self] in guard let self else { return }; _ = self.hfEvent(.modeTap(at: self.now)) }
+        // Latch overlay click (BEA-691): Stop inserts what is left, Discard drops it.
+        overlay.onStop = { [weak self] in
+            guard let self, self.hfTimer != nil else { return }
+            self.handsFree.reset()
+            self.hfEnd(insert: true, reason: .tapped)
+        }
+        overlay.onDiscard = { [weak self] in
+            guard let self, self.hfTimer != nil else { return }
+            self.handsFree.reset()
+            self.hfEnd(insert: false, reason: nil)
+        }
         dictation.onLatchFailure = { [weak self] failure, pin, text in
             self?.hfLatchFailed(failure, pin: pin, text: text)
         }
@@ -270,6 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         hfLatch = target
+        overlay.setLatch(icon: app?.icon, app: target.pin.appName, document: target.pin.documentName)
         toast.show("Latched to \(target.pin.appName) — \(target.pin.documentName)")
         Log.handsfree.event("latched method=\(target.pin.method.rawValue)")
     }
@@ -282,6 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.handsfree.event("latch ended failure=\(failure)")
         hfLatch?.release()
         hfLatch = nil
+        overlay.clearLatch()
         _ = hfEvent(.latchEnded)
     }
 
@@ -289,6 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func hfDropLatch() {
         hfLatch?.release()
         hfLatch = nil
+        overlay.clearLatch()
         Log.handsfree.event("push-to-talk")
     }
 

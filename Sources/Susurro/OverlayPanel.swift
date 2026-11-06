@@ -29,6 +29,39 @@ final class OverlayController {
         panel.contentView = waveform
     }
 
+    /// Overlay click while latched (BEA-691): Stop / Discard.
+    var onStop: (() -> Void)?
+    var onDiscard: (() -> Void)?
+
+    /// Latch (BEA-691): show the mode, the target app's icon and name and the
+    /// document/buffer name; clicking offers Stop / Discard. nil = not latched.
+    func setLatch(icon: NSImage?, app: String, document: String) {
+        let title = "\(app) — \(document)"
+        waveform.latch = (icon, title.count > 30 ? String(title.prefix(29)) + "…" : title)
+        panel.ignoresMouseEvents = false
+        waveform.onClick = { [weak self] view, event in self?.showLatchMenu(view: view, event: event) }
+        waveform.needsDisplay = true
+    }
+
+    func clearLatch() {
+        waveform.latch = nil
+        waveform.onClick = nil
+        panel.ignoresMouseEvents = true
+        waveform.needsDisplay = true
+    }
+
+    private func showLatchMenu(view: NSView, event: NSEvent) {
+        let menu = NSMenu()
+        let stop = NSMenuItem(title: "Stop", action: #selector(MenuTarget.fire(_:)), keyEquivalent: "")
+        let discard = NSMenuItem(title: "Discard", action: #selector(MenuTarget.fire(_:)), keyEquivalent: "")
+        let target = MenuTarget { [weak self] item in
+            if item.title == "Stop" { self?.onStop?() } else { self?.onDiscard?() }
+        }
+        for item in [stop, discard] { item.target = target; menu.addItem(item) }
+        objc_setAssociatedObject(menu, &MenuTarget.key, target, .OBJC_ASSOCIATION_RETAIN)
+        NSMenu.popUpContextMenu(menu, with: event, for: view)
+    }
+
     func show() {
         position()
         waveform.begin()
@@ -39,6 +72,7 @@ final class OverlayController {
         waveform.end()
         waveform.handsFree = false
         waveform.warning = false
+        clearLatch()
         panel.orderOut(nil)
     }
 
@@ -107,19 +141,28 @@ final class WaveformView: NSView {
         }
     }
 
+    /// Latch (BEA-691): target icon + "App — document"; nil = not latched.
+    var latch: (icon: NSImage?, title: String)?
+    var onClick: ((NSView, NSEvent) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if let onClick { onClick(self, event) } else { super.mouseDown(with: event) }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         // Background pill
         let bg = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
         NSColor.black.withAlphaComponent(0.78).setFill()
         bg.fill()
         if handsFree {
-            let accent: NSColor = warning ? .systemOrange : .systemBlue
+            let accent: NSColor = warning ? .systemOrange : (latch != nil ? .systemPurple : .systemBlue)
             let ring = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.5, dy: 1.5),
                                     xRadius: bounds.height / 2 - 1.5, yRadius: bounds.height / 2 - 1.5)
             ring.lineWidth = 3
             accent.setStroke()
             ring.stroke()
-            let caption = NSAttributedString(string: "HANDS-FREE", attributes: [
+            let label = latch.map { "LATCH · \($0.title)" } ?? "HANDS-FREE"
+            let caption = NSAttributedString(string: label, attributes: [
                 .font: NSFont.systemFont(ofSize: 8, weight: .bold),
                 .foregroundColor: accent,
                 .kern: 1.0,
@@ -134,10 +177,15 @@ final class WaveformView: NSView {
         let dotDiameter: CGFloat = 10
         let pulse = 0.65 + 0.35 * abs(sin(Date().timeIntervalSinceReferenceDate * 2.2))
         // Hold-to-talk: pulsing red. Hands-free: steady blue.
-        (handsFree ? NSColor.systemBlue : NSColor.systemRed.withAlphaComponent(pulse)).setFill()
-        NSBezierPath(ovalIn: NSRect(
-            x: 16, y: midY - dotDiameter / 2, width: dotDiameter, height: dotDiameter
-        )).fill()
+        if let icon = latch?.icon {
+            // Latch: the target app's icon instead of the dot.
+            icon.draw(in: NSRect(x: 12, y: midY - 9, width: 18, height: 18))
+        } else {
+            (handsFree ? NSColor.systemBlue : NSColor.systemRed.withAlphaComponent(pulse)).setFill()
+            NSBezierPath(ovalIn: NSRect(
+                x: 16, y: midY - dotDiameter / 2, width: dotDiameter, height: dotDiameter
+            )).fill()
+        }
 
         // Waveform bars
         let barsLeft: CGFloat = 36
@@ -174,4 +222,13 @@ final class WaveformView: NSView {
             ))
         }
     }
+}
+
+/// Bridges NSMenuItem target/action to a closure for the latch overlay menu.
+@MainActor
+final class MenuTarget: NSObject {
+    nonisolated(unsafe) static var key: UInt8 = 0
+    private let handler: (NSMenuItem) -> Void
+    init(_ handler: @escaping (NSMenuItem) -> Void) { self.handler = handler }
+    @objc func fire(_ sender: NSMenuItem) { handler(sender) }
 }
