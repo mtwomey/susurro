@@ -4,3 +4,4 @@ build/
 *.xcodeproj
 .swiftpm/
 build-whisper/
+Fixtures/voice/*.wav

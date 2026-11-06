@@ -138,6 +138,11 @@ compiles the model; later loads are quick. Details are in
   run via [FluidAudio](https://github.com/FluidInference/FluidAudio) (Apache 2.0).
   The model is downloaded from Hugging Face on request and is not bundled
   with Susurro. The same credit appears in **About Susurro**.
+- Full licence texts of the bundled code (whisper.cpp/ggml MIT, FluidAudio
+  Apache 2.0, and the fastcluster BSD-2 and VBx Apache 2.0 code it includes)
+  are in [Support/ThirdPartyNotices.txt](Support/ThirdPartyNotices.txt). They
+  ship inside the app and open from **About Susurro → Licenses…**. Regenerate
+  the file with `scripts/gen_third_party_notices.sh` after a dependency bump.
 
 ## For developers
 

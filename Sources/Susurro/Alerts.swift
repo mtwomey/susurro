@@ -37,7 +37,14 @@ enum Alerts {
         link.frame = NSRect(x: 0, y: 0, width: 260, height: 18)
         alert.accessoryView = link
         alert.addButton(withTitle: "OK")
-        alert.runModal()
+        // Licence texts of bundled code (whisper.cpp/ggml MIT, FluidAudio
+        // Apache 2.0, fastcluster BSD, VBx Apache), copied into Resources by
+        // `make app` from Support/ThirdPartyNotices.txt.
+        let notices = Bundle.main.url(forResource: "ThirdPartyNotices", withExtension: "txt")
+        if notices != nil { alert.addButton(withTitle: "Licenses…") }
+        if alert.runModal() == .alertSecondButtonReturn, let notices {
+            NSWorkspace.shared.open(notices)
+        }
     }
 
     static func showAppleIntelligenceInstructions() {
