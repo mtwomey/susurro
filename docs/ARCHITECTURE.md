@@ -1,8 +1,8 @@
 # Susurro — Architecture (as built)
 
 This file describes what actually exists on `main` after the 2026-11
-architecture review's refactors R0–R7 (R0–R6 checked against 9d0398b, after
-0.2.0-beta.3; R7 logging added by BEA-683): push-to-talk, hands-free latching with pause-cut chunks and
+architecture review's refactors R0–R8 (R0–R6 checked against 9d0398b, after
+0.2.0-beta.3; R7 logging added by BEA-683; R8 model-swap policy by BEA-684): push-to-talk, hands-free latching with pause-cut chunks and
 joins, cross-dictation joins, the pre-insert text-handling stage, and the
 whisper.cpp + Parakeet engines. The review and its per-finding status are in
 `history/ARCHITECTURE_REVIEW_2026-11.md`; its open items are listed under
@@ -49,6 +49,9 @@ Sources/
                               transcribe → trimmed text, `kind`) +
                               TranscriptionEngines.load / kind(ofPath:); app and
                               CLI depend on these only
+    EngineSlot.swift          (R8) model-swap memory policy: current engine +
+                              per-dictation EngineLease; old engine freed when
+                              in-flight work drains, swaps logged
     EngineCatalog.swift       (R6) EngineKind + per-kind EngineDescriptor: menu
                               title, EngineCapabilities (artifact file/directory,
                               Apple Silicon only, punctuation, ITN, prompt,
@@ -194,7 +197,7 @@ Sources/
                               → InsertExecutor.insert. Owns SessionGate,
                               HeldMarkJoiner, previous chunk and cross-dictation
                               state
-    EngineController.swift    (R4) model lifecycle: loaded engine, load generation
+    EngineController.swift    (R4) model lifecycle: loaded engine (EngineSlot, R8), load generation
                               (a load that finishes after a newer pick is dropped),
                               State (loading/downloading/failed/ready), download-
                               and-switch, first-run auto-download, toasts and
@@ -461,9 +464,22 @@ on capabilities (`TranscriptFilter` on `emitsBracketTokens`, `ModelManager` on
 - Nothing is ever written to `~/Library/Application Support/FluidAudio`.
 - Switching models in the menu sets `activeModelID` and `EngineController`
   reloads the engine off-main; its generation counter drops a load that
-  finishes after a newer pick. Dictations already queued keep the engine they
-  captured, so both engines are resident until they finish (F7; policy is
-  open item R8).
+  finishes after a newer pick.
+- **Model-swap memory policy (R8, F7; `SusurroCore/EngineSlot.swift`).**
+  `EngineController` keeps the engine in an `EngineSlot`. Each dictation takes
+  an `EngineLease` at key release (`DictationController`) and holds it until
+  its job ends, so a dictation started before a switch finishes on the engine
+  it started with — never dropped, never re-routed to the new model. When a
+  load starts, the slot drops its own reference to the old engine
+  (`retire()`); the old engine then lives only as long as in-flight leases
+  and is freed when the last one finishes. With nothing in flight it is freed
+  at once, so old + new (~600 MB for small.en plus Parakeet Core ML) are only
+  both resident while a dictation still needs the old one. Push-to-talk is
+  ignored while no engine is installed (unchanged). Each step is logged on
+  `Log.engine`: `model swap: old <kind> engine released (nothing in flight)`,
+  `… kept for N in-flight dictation(s)`, `… released after in-flight work
+  drained`, `model swap: <kind> engine installed`. Tested with a
+  deinit-tracking fake engine (`EngineSlotTests`).
 - First Parakeet load after download compiles Core ML (~20 s); later loads are
   sub-second.
 - Parakeet does its own inverse text normalisation (numbers, currency, times,
@@ -607,11 +623,8 @@ with `activeModelPath()` (nil = genuinely no model) when messaging users.
   `scripts/feed_wav.sh clip.wav` dictates a WAV into the frontmost app;
   `scripts/context_probe.py` runs the pre-insert pipeline without typing.
 
-## Known open items (after R0–R7)
+## Known open items (after R0–R8)
 
-- **R8 — model-swap memory policy (F7).** During a switch the old engine
-  stays resident until queued dictations that captured it finish; make that
-  a deliberate, logged policy only if memory complaints come in.
 - **F13 — PostProcessor re-reads rules.json on every call.** By design (live
   reload); fine as is. Add an mtime check only if it ever shows in a profile.
 - **Flake to watch: the wall-clock `CappedRead` test**

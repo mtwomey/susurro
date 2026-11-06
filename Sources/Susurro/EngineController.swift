@@ -13,7 +13,11 @@ final class EngineController {
     /// looked broken: push-to-talk silently did nothing.
     enum State { case loading, downloading, failed, ready }
 
-    private(set) var engine: (any TranscriptionEngine)?
+    /// Model-swap memory policy (R8, F7): the slot drops the old engine when
+    /// a load starts; dictations hold an `EngineLease`, so the old engine is
+    /// freed as soon as in-flight work drains (logged on Log.engine).
+    let slot = EngineSlot()
+    var engine: (any TranscriptionEngine)? { slot.current }
     private(set) var state: State = .loading {
         didSet { onStateChange() }
     }
@@ -59,9 +63,10 @@ final class EngineController {
             return
         }
         let kind = models.activeModel?.engine
-        // Drop the old engine first so whisper and Parakeet are never both
-        // resident; push-to-talk is ignored while engine is nil.
-        engine = nil
+        // Drop the old engine first (R8 policy, EngineSlot): it stays
+        // resident only while in-flight dictations still hold a lease on it.
+        // Push-to-talk is ignored while engine is nil.
+        slot.retire()
         setStatus("Loading model…")
         state = .loading
         Log.engine.event("loading model (\(kind?.rawValue ?? "?")): \(path)")
@@ -87,7 +92,7 @@ final class EngineController {
                         Log.engine.event("model load superseded, discarding")
                         return
                     }
-                    self.engine = engine
+                    self.slot.install(engine)
                     self.state = .ready
                     self.clearStatus()
                     if -loadStart.timeIntervalSinceNow >= slow {

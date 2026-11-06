@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Transcribe-and-insert for every dictation, with the hands-free and
     /// cross-dictation join state (review F1/R4).
     private lazy var dictation = DictationController(
-        engine: { [unowned self] in self.engine }, cleaner: { [unowned self] in self.cleaner },
+        engine: { [unowned self] in self.engines.slot.lease() }, cleaner: { [unowned self] in self.cleaner },
         postProcessor: postProcessor, settings: settings, executor: executor, toast: toast)
     private lazy var statusMenu: StatusMenuController = {
         let m = StatusMenuController(models: models, toast: toast, hotkey: hotkey,

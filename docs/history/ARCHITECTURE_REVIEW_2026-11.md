@@ -17,7 +17,7 @@ is unchanged from the review (commit a9a1b9f on the deleted branch
 | F4 Pipeline duplicated in the CLI | closed | R2 da5579f (BEA-664: susurro-cli runs DictationPipeline; golden hands-free replay) |
 | F5 250 ms AX cap is not a cap | closed | R1 5ba6f16 (BEA-663: CappedRead) |
 | F6 Engine extension cost spread out | closed | R6 9d0398b (BEA-667: EngineCatalog, EngineCapabilities, catalog-driven loader) |
-| F7 Model swaps keep two engines resident | open | R8 (model-swap memory policy), only if memory complaints come in |
+| F7 Model swaps keep two engines resident | done | R8 (BEA-684): EngineSlot + EngineLease, old engine freed when in-flight work drains, logged |
 | F8 Join latency not measured | closed | R1 5ba6f16 (BEA-663: StageTimings ms_ax/ms_transcribe/ms_join/ms_insert in text-handling.log); the structured per-dictation record is part of R7 |
 | F9 Config sprawl | closed | R4 f7c370c (BEA-666: Settings façade + Tuning) |
 | F10 No CI | closed | R5 d87ca79 (BEA-662: GitHub Actions build + swift test; release stays local) |
@@ -30,7 +30,7 @@ is unchanged from the review (commit a9a1b9f on the deleted branch
 | F17 Build and release | won't-do | No action needed; release and signing stay local (docs/releasing.md), CI has no signing steps |
 
 Refactor plan: R0–R6 done (R0 5a90491, R1 5ba6f16, R2 da5579f, R3 cc839c9,
-R4 f7c370c + b1f215b, R5 d87ca79, R6 9d0398b). R7 done in BEA-683 (os.Logger + per-dictation record); R8 is open.
+R4 f7c370c + b1f215b, R5 d87ca79, R6 9d0398b). R7 done in BEA-683 (os.Logger + per-dictation record); R8 done in BEA-684 (model-swap memory policy).
 
 Also open: the wall-clock `CappedRead` test in DictationTimingTests failed
 once on CI at the R4 merge (f7c370c, CI run 42176342630) when the CPU-bound

@@ -18,14 +18,14 @@ final class DictationController {
     /// and its audio, kept so the next dictation can decide its full stop.
     private var xPrev: (record: CrossDictationJoin.Previous, samples: [Float], lastSpeech: Int)?
 
-    private let engine: () -> (any TranscriptionEngine)?
+    private let engine: () -> EngineLease?
     private let cleaner: () -> (any TextCleaning)?
     private let postProcessor: PostProcessor
     private let settings: Settings
     private let executor: InsertExecutor
     private let toast: ToastPanel
 
-    init(engine: @escaping () -> (any TranscriptionEngine)?, cleaner: @escaping () -> (any TextCleaning)?,
+    init(engine: @escaping () -> EngineLease?, cleaner: @escaping () -> (any TextCleaning)?,
          postProcessor: PostProcessor, settings: Settings, executor: InsertExecutor, toast: ToastPanel) {
         self.engine = engine
         self.cleaner = cleaner
@@ -44,7 +44,11 @@ final class DictationController {
                                      expectedPID: pid_t?, hfChunk: HFChunk? = nil,
                                      hfToken: Int? = nil,
                                      trigger: DictationRecord.Trigger? = nil) -> Task<Void, Never>? {
-        guard let engine = engine() else { return nil }
+        // The lease pins the engine this dictation started with across a model
+        // switch (R8): it finishes on the old engine, which is freed once the
+        // last such job ends.
+        guard let lease = engine() else { return nil }
+        let engine = lease.engine
         // One structured record per dictation (R7, F14): carries no text.
         let baseRecord = DictationRecord(trigger: trigger ?? (hfChunk != nil ? .handsFree : .pushToTalk),
                                          engine: engine.kind, outcome: .empty)
@@ -67,6 +71,7 @@ final class DictationController {
         }
         let pendingFieldRead = fieldTask
         return Task.detached(priority: .userInitiated) {
+            defer { withExtendedLifetime(lease) {} }
             let clock = ContinuousClock()
             var timings = StageTimings()
             let transcript: String
