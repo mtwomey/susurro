@@ -169,6 +169,55 @@ AX write plus read-back: ~1–2 ms per chunk after the first call (36 ms cold in
 
 **Conditional GO** for a v1 that works well in native apps, Firefox-engine browsers and terminals, with Emacs via its bridge. Electron apps (Slack, VS Code, likely Hermes desktop) fall back to the clipboard, with a clear toast, unless the board accepts an opt-in focus hop. Run the 0.5-day gap probe on sacrificial Slack/Hermes fields before committing. If those Electron targets are must-haves and a focus hop is unacceptable, the answer is **no-go**.
 
+## Gap probe results (BEA-689, 2026-11-06)
+
+Tools: `spike/latch-probe/probe2.swift` (no focus hop), `axw.swift`/`focus.swift` helpers (in scratch), `react-test.html`, `chordtap.swift`; run sheet in `spike/latch-probe/RUNSHEET.md`. Host: macOS 26.6.2, **Stage Manager on** (left on; each target was activated, which brings it onto the current stage). Every marker was removed and verified (probe2 exit 0 on every run). The Obsidian scratch note was deleted.
+
+### Strict matrix
+
+| App | 1. Background delivery (read-back) | 2. Context readable | 3. Identity holds after focus leaves | 4. App state / undo | Verdict |
+|---|---|---|---|---|---|
+| TextEdit | **PASS**: AX write landed, postToPid landed | **PASS**: value + range (11,0) | **PASS**: element valid, caret 11→11 | Undo **not verified**: a pid-posted Cmd+Z in the background did nothing (menu key equivalents need the key window). In-app undo grouping still to check in the frontmost app. | **Full, pending the undo check** |
+| Notes | not probed (same AppKit text system as TextEdit) | – | – | – | Expected to match TextEdit; probe before listing |
+| Terminal | postToPid works (BEA-678); AX is read-only | **PARTIAL**: value = the whole scrollback (95 chars), caret range readable (72,0); the command line is not separable from output | – | – | **Not supported** (context is the scrollback, so joins can't be computed). A Terminal bridge (AppleScript) could change this. |
+| Warp | AX write: no (read-only). **postToPid landed** (`[pid]` read back) | **FAIL**: no selection range (`range=nil`, numChars 0) | PASS (element valid) | – | **Not supported** (criterion 2) |
+| VS Code (untitled file, window activated onto the stage, so the BEA-678 "inconclusive" is settled) | **FAIL**: AX write err 0, nothing landed. postToPid not attempted: once VS Code is in the background its focused element is no longer the remembered one | **FAIL**: Monaco's hidden textarea reports value length 0 while the editor holds `alpha beta ` | FAIL (focus changes) | – | **Not supported** |
+| Obsidian | AX write: no. **Raw postToPid lands** (`alpha beta [pid]` in the saved file; the earlier read-back miss doesn't reproduce: read-back of the remembered element now shows it) | PASS: value + range | **FAIL**: in the background the app reports *no* focused element (`kAXErrorNoValue`, -25212), so the "focused == remembered" check before each chunk can't run. Text goes to whatever CodeMirror has focus. | – | **Not supported** under the strict invariant |
+| Zen + React test page | **pid-posted text reached React**: window title (bound to React state) became `R:[pid]`, so the controlled input saw real input events. AX write: inconclusive. After keyboard (Tab) focus, Firefox reported the focused element as `AXWebArea`, not the textarea, so the AX write had no target | FAIL in this run (focused element = web area) | – | React sees pid-posted text (**PASS** for the postToPid path). contenteditable not checked. | **Inconclusive**: BEA-678 saw an `AXTextArea` after a mouse click; Firefox AX focus depends on how the field was focused |
+| Slack | not probed | – | – | – | Stopped: after the quick switcher, focus fell back to a composer holding a real 24-character draft. Not touched. Electron, so expected to behave like VS Code/Obsidian. |
+| Hermes desktop | not probed (time; no safe "new chat" shortcut verified) | – | – | – | Electron: expected not supported |
+| Emacs | bridge (EmacsServerBridge) | – | – | – | Full via the bridge (buffer pinning needed); unchanged |
+
+**Electron pattern (VS Code and Obsidian, measured):** while the app is in the background, its AX focused element disappears or changes. So the latch's per-chunk target check is impossible, even where keystrokes land (Obsidian). Slack and Hermes are the same framework. Assume they fail until a probe on a throwaway field says otherwise.
+
+### Passive-learning spike (frontmost AX write: all-or-nothing?)
+
+| App | Trials | Result |
+|---|---|---|
+| TextEdit | 10 | 10× **all** (1.5–5.3 ms) |
+| VS Code | 5 | 5× **none** (attribute reports settable, err 0, nothing inserted) |
+| Obsidian | 5 | 5× **none** (same) |
+| Warp | 3 | 3× **none** (attribute not settable) |
+
+23 trials, 0 partial, 0 double. The silent no-op is clean (no growth, no marker), so "AX write → read back → if nothing landed, type the chunk" never double-inserts in these apps. Settable == true is *not* a predictor (VS Code, Obsidian), so the read-back is what decides. Not covered: Slack, Hermes, Zen fields, and long or multi-line chunks. **Verdict: reliable enough to ship always-on, with the read-back guard,** after a frontmost run on Slack, Hermes and Zen (cheap, and the user is in front, so no focus is taken).
+
+### Chord sanity
+
+**Not done.** It needs a person holding rightOption and tapping Cmd. `chordtap` (listen-only) is built and ready (`~/.hermes/cache/scratch/bea689/chordtap 20`).
+
+### Launch support list (strict)
+
+- **Full:** TextEdit (pending the in-app undo check), Emacs (bridge). Notes probably, but unprobed.
+- **Not supported:** VS Code, Obsidian, Warp, Terminal (context), Slack and Hermes (unprobed; Electron pattern), Zen (inconclusive).
+
+### Go / no-go
+
+**Recommendation: NO-GO for latch now.** Under the strict criteria the launch list is native AppKit text plus Emacs. Every Electron app fails identity validation in the background, and the terminals fail on context. Matthew's daily targets (Slack, VS Code, Hermes, Obsidian, Warp) would all show "Latching isn't supported". That is 4–5 days of work for a mode that works in TextEdit/Notes/Emacs.
+
+**Do ship passive AX learning on its own**, as an insertion-path improvement for frontmost dictation (always on, read-back guarded). It removes typing latency where AX works, it is the qualification source if latch is revisited, and it is about 1 day.
+
+If the board still wants latch (narrow GO): revised effort **about 4 days**. Machine rename + three-state cycle 0.5; LatchTarget/validation/AX + read-back delivery and Emacs bridge 1.5; capability list (bundled + remote) and pill 0.5; element-targeted FocusedFieldReader and joins 1; overlay 0.5. Drop postToPid latch for v1 (no app passes identity with it). Guided self-test only once a postToPid-validating approach exists.
+
 ## Board decisions (2026-11-06, BEA-678 interview)
 
 - **Go/no-go:** probe the gaps first (Slack, Hermes desktop, Warp, VS Code with Stage Manager off; React/contenteditable input; Obsidian read-back; strict full-support criteria for each launch app; the passive-learning spike). Go/no-go follows the probe.
