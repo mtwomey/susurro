@@ -86,40 +86,63 @@ Hold rightOption (PTT) and tap Cmd. The latch key setting already exists; Cmd be
 
 The overlay pill shows the mode (hands-free vs latch). In latch it also shows the target app's icon and name, plus the field's AX title/placeholder where available ("Slack: #general"). Clicking the pill offers Stop / Discard / Retarget-to-frontmost. A toast appears when a chunk falls back to the clipboard.
 
-## Capability detection at latch time (board question, 2026-11-06)
+## Capability detection: full support or nothing (board decision, 2026-11-06)
 
-Question: can Susurro tell, quickly and automatically, whether the app or field being latched supports full latch?
+**Board direction (BEA-678 thread):**
+- Latch only targets where *every* latch function works.
+- Anywhere else, the second Opt+Cmd tap shows a pill: "Latching isn't supported in <app>". No partial latch, no clipboard-fallback latch.
+- A static list is fine, as long as it can be **updated dynamically**, because we can't know which apps users will want.
 
-**Short answer:** partly. A few milliseconds of checks when latching can rule a target **out**, or rule it **in** if it is already known. Static checks alone cannot prove that an unknown target works, because the APIs lie:
-- VS Code and Obsidian both report `kAXSelectedText` as settable. Both return `.success` and insert nothing.
-- Terminal returns `.success` for a read-only attribute.
-- No API tells you whether an app accepts `postToPid` keystrokes in the background.
-- "Is it Electron?" doesn't decide it either. Obsidian (Electron) accepts `postToPid`; VS Code (Electron) does not. Slack, VS Code, Obsidian and Hermes all bundle `Electron Framework.framework`.
+### What "fully supported" means
 
-The only reliable proof is a write that is seen to land. Susurro must not make a test write into a real field: it pollutes undo, sends Slack typing indicators, and can fire React handlers.
+A target (app + field kind) is **full** only if all of these held when it was verified:
 
-**Recommended: three tiers, all cheap.**
+1. **Background delivery lands** while another app is in front, via a bridge, an AX write or `postToPid`. Proved by reading the field back, never by an API return code: VS Code, Obsidian and Terminal all return `.success` on AX writes that insert nothing.
+2. **Context is readable**: the field's value and caret/selection can be read, so smart spacing, continuation and joins (BEA-657/677) work against the background field.
+3. **Identity holds**: the remembered element stays valid (not stale) after the app loses focus, and the caret doesn't move.
+4. **App state stays consistent**: in web fields the page sees the input, so React/controlled inputs keep it, and undo stays sane.
 
-1. **At the chord (target is still frontmost, ~2–5 ms):**
-   - Secure field or `IsSecureEventInputEnabled`: refuse latch.
-   - Bridge available (Emacs; later Terminal/iTerm): **full**.
-   - Look up `bundleID` (+ major version, + field role) in a capability table. The table is shipped from probe results, and the machine adds what it learns. A hit gives **full** (and which method), **clipboard-only**, or **no**.
-   - Context readability, which decides whether joins work in full: can `AXValue` and the selected range be read? `FocusedFieldReader` already does this read.
-2. **Unknown target:** latch as **unverified**. Deliver the first chunk with the best candidate method, then **verify by read-back** (value length/hash changed at the caret).
-   - Landed: record the method as working for that bundle and role.
-   - Did not land: send the chunk to the clipboard with a toast, and record the app as clipboard-only.
-   - Read-back impossible (fields that don't expose their value): stay unverified. Keep delivering and say so on the overlay; never claim success.
-   - So detection happens on the first real chunk, at no extra cost, and only once per app.
-3. **Optional self-test (Settings → "Test latch in…"):** run the spike's probe against a scratch field the user opens. Gives an answer before relying on latch in an app.
+Anything less is **not supported**. That rules out an "unverified" latch on first use. Trying it live on an unknown app is the "it works but not very well" experience the board wants to avoid.
 
-**UX that follows:**
-- The second Opt+Cmd tap shows a badge on the overlay right away: **Latch ✓** (known full), **Latch ?** (unverified), or **Latch: clipboard** (known not to work).
-- If the app is known not to work, the tap could **stay in hands-free** and show "Latch not supported in Slack". The board may prefer that to latching into the clipboard.
+### Where the list comes from (dynamic, three sources)
 
-**Caveats:**
-- The table goes stale when apps update, so key it by major version and let the first-chunk verification override it.
-- Context-read success (joins) and delivery success are separate checks; report both.
-- Web pages inside a browser vary per site and per field (textarea vs contenteditable vs canvas editors). For browsers, key by role, plus the site domain where available, rather than by bundle alone.
+1. **Bundled list:** shipped with the app, from probe results.
+2. **Remote list:** a `latch-capabilities.json` in the Susurro GitHub repo or release assets. It is fetched at launch and daily (ETag/conditional GET), cached locally, and the bundled copy is used offline. It can **add** apps and **revoke** them (an app update breaks something) without a Susurro release. Entries are keyed by bundle ID + version range + field kind (and, for browsers, the field type: textarea / contenteditable / canvas editor). Each entry records the delivery method and the date it was verified. Only HTTPS from the repo, no telemetry.
+3. **Local qualification on the user's machine**, so apps nobody listed can become supported:
+   - **Passive (no user effort):** during ordinary frontmost dictation in an unlisted app, Susurro already reads the field (FocusedFieldReader). AX writes don't depend on which app is active, so when the field reports `kAXSelectedText` as settable and read-back is possible, Susurro can insert that chunk with an AX write and verify it by read-back. If it lands, criteria 1, 2 and 4 are met for AX. If it doesn't land, nothing was inserted, so Susurro types the chunk the normal way and the user sees no difference. A few successful chunks qualify the app/field kind for AX-based latch. *Risk: this changes the normal insertion path for unlisted apps. It needs a strict "AX no-op or full insert, never partial" read-back check, or it stays behind a setting. Spike before committing.*
+   - **Guided self-test (one click):** the "not supported" pill offers "Test <app>". Susurro asks the user to put the caret in a scratch field, brings its own window forward, then runs the probe: AX write, `postToPid`, read-back, context read. It removes the marker it typed and records the result. This is the only way to qualify `postToPid`-only apps (terminals, Obsidian), because background keystroke acceptance can't be observed while the app is in front.
+   - Local entries are tied to the app's version. After an app update they drop to "re-check needed" until a passive check or a self-test passes again. A revocation on the remote list overrides a local pass.
+
+### At latch time (fast, ~2–5 ms, target still in front)
+
+1. Secure field or secure input on: pill "Latching isn't available in password fields".
+2. Look up (bundle ID, version, field kind) in local ∪ remote ∪ bundled.
+3. Re-check the field itself against the entry: the role matches, the value and selection can be read, and selected text is settable where the method is AX. This catches the unsupported field inside a supported app, such as a canvas editor in Zen.
+4. Pass: latch, with the app icon and name on the pill. Fail: the pill "Latching isn't supported in <app>", recording carries on in hands-free (the board can choose "stop" instead).
+
+### While latched
+
+Every chunk is still verified by read-back. If one fails (the app updated, or the field was re-rendered):
+- **end latch**, with pill "Latch ended: <app> stopped accepting text". Recording carries on as hands-free, or stops; see the open question.
+- put that chunk on the clipboard so nothing is lost.
+- demote the local entry.
+
+Latch never keeps going in a degraded state.
+
+### What this means for the apps probed so far (strict criteria)
+
+- **Likely full at launch, after checking criteria 2–4:** native AppKit text (TextEdit, Notes), Zen textareas (the React/contenteditable check is still owed), Emacs (bridge), Terminal (postToPid; context read still to be confirmed), Obsidian (postToPid; the read-back miss seen in the probe needs a re-check).
+- **Not supported today:** VS Code, Slack, Hermes desktop (expected; Slack and Hermes not yet tested on throwaway fields), Warp (not tested).
+
+The board's choice gives a shorter list of apps that all work properly. That matches the stated goal.
+
+### Effort impact
+
+- Bundled + remote list, lookup, pill: about 0.5 day.
+- Guided self-test: about 1 day (most of it is the spike probe).
+- Passive AX qualification: about 1 day plus a spike. It touches the normal insertion path, so it lands last and behind a setting.
+- Removing partial/clipboard latch modes **saves** about 0.5 day.
+- Net: about +2 days on the earlier estimate, so the latch build is about 5 days after BEA-660 R1–R4.
 
 ## Performance
 
