@@ -200,3 +200,35 @@ the opt-in live suites. It is also what the future "Test <app>" self-test
 **Verify:** full suite, both live scratch suites (Emacs, Obsidian), CI, a
 fresh test build for a hands-on check. **Estimate:** about one working day
 of agent runs.
+
+## Remote capability list (BEA-692)
+
+`Bridges/RemoteLatchAllowlist.swift` layers a signed list over
+`LatchAllowlist.bundled`. Pure and offline: it verifies, merges and caches;
+it never fetches.
+
+- **Format.** Hosted/cached bytes are an `Envelope` JSON
+  `{keyID, payload, signature}` (base64). `payload` is the exact JSON of a
+  `Document` `{schema: 1, serial, expires (ISO 8601), entries: [{bundleID,
+  method, minAppVersion}]}`; `signature` is Ed25519 (CryptoKit
+  `Curve25519.Signing`) over those bytes.
+- **Merge.** Entries apply in order over the bundled list: `method: null`
+  removes the bundle ID (remote kill switch), anything else adds or replaces.
+  A remote list cannot widen support past compiled-in code: engage still
+  refuses with `bridgeMissing` when the build lacks the bridge.
+- **minAppVersion.** `LatchCapability.minAppVersion` (optional, so existing
+  entries decode). `LatchPinRequest.appVersion` is filled from the app's
+  `CFBundleShortVersionString`; a set minimum with an unknown or lower
+  version refuses with `appVersionTooOld` ("Latching needs <app> x.y or
+  later") before the bridge is touched. Full support or nothing.
+- **Resolution.** `resolve(fetched:cached:serialFloor:now:)`: a verified
+  fetch wins (and is returned for caching), else a verified cache, else the
+  bundled list. Every failure (malformed, unknown key, bad signature,
+  schema, expired, serial below the floor) falls back; it never fails open.
+  `serial` is anti-rollback; `expires` bounds offline use of a cached copy.
+- **Inert in this build.** `RemoteLatchAllowlist.trustedKeys` is empty and
+  nothing fetches, so the bundled allowlist is always in force. Switching it
+  on needs: hosting URL, key custody, a fetch (ephemeral `URLSession`, no
+  cookies/identifiers, plain GET of one static file), the cache path
+  (`~/Library/Application Support/<bundle id>/latch-capabilities.json`) and a
+  persisted serial floor — decisions left to the board.
