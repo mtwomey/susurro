@@ -27,13 +27,19 @@ public enum EmacsServerProtocol {
 
     /// Parses the server's reply; nil unless it carries a base64 answer.
     public static func parse(reply: String) -> String? {
-        guard let line = reply.split(separator: "\n").first(where: { $0.hasPrefix("-print ") }) else { return nil }
-        // The printed value ends with a newline, sent quoted as "&n".
-        var value = unquote(String(line.dropFirst("-print ".count))).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 else { return nil }
-        value = String(value.dropFirst().dropLast())
-        guard value != "SKIP", let data = Data(base64Encoded: value) else { return nil }
+        guard let value = printedString(reply: reply),
+              value != "SKIP", let data = Data(base64Encoded: value) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 
+
+    /// The printed Lisp string from a `-print` reply, quotes removed (the
+    /// latch bridge also needs the sentinels SKIP and GONE).
+    public static func printedString(reply: String) -> String? {
+        guard let line = reply.split(separator: "\n").first(where: { $0.hasPrefix("-print ") }) else { return nil }
+        // The printed value ends with a newline, sent quoted as "&n".
+        let value = unquote(String(line.dropFirst("-print ".count))).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 else { return nil }
+        return String(value.dropFirst().dropLast())
+    }
 }
