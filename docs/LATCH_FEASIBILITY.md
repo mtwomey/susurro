@@ -29,7 +29,7 @@ Host: macOS 26.6.2 with **Stage Manager on**. Run 2026-11-05.
 | Slack (Electron) | AXGroup, not settable | **no** (read-only) | not tested | not tested | Not written to, to avoid typing into a real Slack draft. Composer is a contenteditable exposed as a group. |
 | Hermes desktop (Electron) | AXTextArea, settable | not tested | not tested | not tested | The composer held a 17-character user draft, so the probe did not write to it. Settable suggests AX might work, but Electron usually ignores it (see VS Code). |
 | Warp | AXTextArea, not settable, value = scrollback | **no** (read-only) | not tested | not tested | Like Terminal. postToPid is the likely path; not yet verified. |
-| Emacs | focused element is AXWindow (no text AX) | **no** | not tested | not tested | Not needed: **EmacsServerBridge** already inserts by bundle ID, without focus. It is the natural latch path, but it targets Emacs's *current* buffer, so latch must pin the buffer name too. |
+| Emacs | focused element is AXWindow (no text AX) | **no** | not tested | not tested | **Correction (BEA-689):** `EmacsServerBridge` (`Sources/Susurro/AppBridges.swift`) only *reads* the text before the cursor today; it does not insert. Inserting goes over the same server socket (an `-eval` of `insert` in a pinned buffer at a marker), which is small but still to be written and probed. It is the natural latch path, but it targets Emacs's *current* buffer, so latch must pin the buffer name too. |
 | Obsidian 1.14.5 (Electron/CodeMirror 6) | AXTextArea, settable | **no** (err 0, 1.2 ms, nothing inserted) | **works** (typed into the note while Finder was frontmost) | works, ~307 ms (the probe's read-back missed it, but the marker is in the saved file) | Probed 2026-11-05 at the board's request (BEA-630), in a scratch note that was deleted afterwards. Unlike VS Code, Obsidian accepts pid-targeted keystrokes in the background, so postToPid is its latch path. The markers landed at the caret (start of the note), so latch must not move the caret. |
 
 Gaps: Slack, Hermes, Warp, VS Code and Emacs postToPid/hop writes still need sacrificial fields (a test Slack DM, a scratch Hermes chat, a fresh Warp tab, VS Code with Stage Manager off) before a go decision. That is about 30 minutes of probing in a follow-up.
@@ -227,6 +227,30 @@ The scratch note was deleted through the vault API, and no leftover file or tras
 **Rejected alternatives (and why):** AX `kAXValue` set (replaces the whole document); CDP via `obsidian dev:cdp` (`Input.insertText` goes to the focused element, which is the same focus problem); Advanced URI / `obsidian://` (opens the app in front); writing the `.md` file directly (no caret or undo, and it races the open editor buffer); the Local REST API plugin (not installed, and it has no caret API); postToPid plus an AXObserver focus-change guard (keystrokes still follow CodeMirror's internal focus, and Electron stops reporting focus in the background).
 
 **General lesson:** for apps that fail AX/postToPid, look for an **in-app scripting bridge**. Emacs (server) and Obsidian (CLI eval) both pass every strict criterion that way. Candidates worth a look: VS Code (a tiny extension with a local socket, using `TextEditor.edit` on a pinned document) and Terminal/iTerm (AppleScript). Slack, Warp and Hermes desktop have no such bridge that I know of.
+
+### Architecture: pluggable app bridges (board question, BEA-689)
+
+Susurro already has this pattern. `Sources/Susurro/AppBridges.swift` defines `protocol AppBridge { name; bundleIDs; textBeforeCursor() }` and a registry, `AppBridges.bridge(for: bundleID)`, which is a lookup in a short list (`[EmacsServerBridge()]`). `FocusedFieldReader.readNow` asks the registry first. If no bridge claims the frontmost app's bundle ID, it goes straight to the generic Accessibility path. **Apps without a bridge pay one array scan and nothing else.** No sockets, processes or observers exist for them. A bridge returns nil whenever it can't answer quickly, and then the generic path applies. Today bridges are read-only (context for joins).
+
+Latch extends the same protocol, so it stays pluggable and costs nothing per app:
+
+```swift
+protocol AppBridge {                       // existing
+    var name: String { get }
+    var bundleIDs: Set<String> { get }
+    func textBeforeCursor() -> String?     // existing: context
+    // new, optional (default: nil = "this bridge can't latch")
+    func pinTarget() -> LatchPin?          // at latch time, app frontmost: which doc/tab + caret offset
+    func insert(_ text: String, at pin: LatchPin) -> LatchReadBack?  // background insert + read-back, one round trip
+    func isAlive(_ pin: LatchPin) -> Bool  // target still open?
+}
+```
+
+- **ObsidianBridge** (`md.obsidian`): talks to `~/.obsidian-cli.sock`, or runs the CLI as a fallback. It connects only when a latch into Obsidian starts and disconnects when the latch ends.
+- **EmacsServerBridge** (`org.gnu.Emacs`): add `pinTarget` / `insert` over the socket it already uses.
+- Later candidates follow the same shape: a VS Code extension socket, Terminal/iTerm AppleScript.
+- The **latch delivery policy** asks the registry for a bridge first, then generic AX + read-back, otherwise shows the pill. The **capability list** records `method: bridge:<name>` per bundle ID, so the remote JSON can also revoke a bridge.
+- Bridges are compiled into the app, not loaded at runtime. They're pluggable in the code sense: adding one means one new file plus one line in `AppBridges.all`. There's no third-party plugin loading and no new attack surface.
 
 ### Launch support list (strict)
 
