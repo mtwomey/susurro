@@ -24,24 +24,24 @@ struct PTTKey: Sendable, Equatable {
     static let `default` = all[0] // Right Option
 
     static func saved() -> PTTKey {
-        let id = UserDefaults.standard.string(forKey: "pttKeyID")
+        let id = Settings().pttKeyID
         return all.first { $0.id == id } ?? .default
     }
 
     func save() {
-        UserDefaults.standard.set(id, forKey: "pttKeyID")
+        Settings().pttKeyID = id
     }
 
     /// The hands-free latch key for a push-to-talk key (BEA-651): the saved
     /// preference unless it is the push-to-talk key, never the same key.
     static func latch(for ptt: PTTKey) -> PTTKey {
         let id = LatchKeyResolver.resolve(ptt: ptt.id,
-                                          preferred: UserDefaults.standard.string(forKey: "latchKeyID"))
+                                          preferred: Settings().latchKeyID)
         return all.first { $0.id == id } ?? all.first { $0.id != ptt.id }!
     }
 
     static func saveLatch(_ key: PTTKey) {
-        UserDefaults.standard.set(key.id, forKey: "latchKeyID")
+        Settings().latchKeyID = key.id
     }
 }
 

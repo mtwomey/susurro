@@ -29,25 +29,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var cleanupItem: NSMenuItem!
 
     private var cleaner: (any TextCleaning)?
+    /// Typed façade over the UserDefaults keys; tuning constants (F9, R4).
+    private let settings = Settings()
+    private let tuning = Tuning.default
     private var cleanupEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "llmCleanupEnabled") }
-        set { UserDefaults.standard.set(newValue, forKey: "llmCleanupEnabled") }
+        get { settings.llmCleanupEnabled }
+        set { settings.llmCleanupEnabled = newValue }
     }
 
     private var copyToClipboard: Bool {
-        get { UserDefaults.standard.bool(forKey: "copyToClipboard") } // default off
-        set { UserDefaults.standard.set(newValue, forKey: "copyToClipboard") }
+        get { settings.copyToClipboard } // default off
+        set { settings.copyToClipboard = newValue }
     }
     private var smartSpacingEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "smartSpacingEnabled") } // default off
-        set { UserDefaults.standard.set(newValue, forKey: "smartSpacingEnabled") }
+        get { settings.smartSpacingEnabled } // default off
+        set { settings.smartSpacingEnabled = newValue }
     }
     // Self-tracking, not an Accessibility read — see docs/history/SMART_SPACING_PLAN.md.
     private let hotkey = HotkeyMonitor()
 
     // Hands-free (BEA-651). The machine decides; the rest is plumbing.
-    private var handsFree = HandsFreeMachine()
-    private var segmenter = PauseSegmenter()
+    private lazy var handsFree = tuning.makeHandsFreeMachine()
+    private lazy var segmenter = tuning.makeSegmenter()
     private var hfBuffer: [Float] = []      // samples of the unfinished segment
     private var hfBufferStart = 0           // absolute index of hfBuffer[0]
     private var hfTotal = 0                 // samples drained this session
@@ -85,8 +88,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var engineState: EngineState = .loading {
         didSet { updateStatusIcon() }
     }
-    /// A load slower than this gets a "still loading" toast and a "ready" toast.
-    private static let slowLoadThreshold: TimeInterval = 1.5
     private var axPollTimer: Timer?
 
     // Set once if the mic-permission callback reports denial. Sticky for the
@@ -483,7 +484,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let modelName = models.activeModelID
         let loadStart = Date()
         // Only announce slow loads, so the usual sub-second load stays silent.
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.slowLoadThreshold) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + Tuning.default.slowLoadThreshold) { [weak self] in
             guard let self, generation == self.engineGeneration, self.engine == nil,
                   self.engineState == .loading else { return }
             self.toast.show(
@@ -504,7 +505,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.engine = engine
                     self.engineState = .ready
                     self.clearStatus()
-                    if -loadStart.timeIntervalSinceNow >= Self.slowLoadThreshold {
+                    if -loadStart.timeIntervalSinceNow >= Tuning.default.slowLoadThreshold {
                         self.toast.show("✓ \(modelName) ready — hold \(self.hotkey.key.title) to dictate")
                     }
                 }
@@ -764,7 +765,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// frontmost app. Off unless `defaults write <bundle id> DevFeedHook -bool YES`.
     ///   scripts/feed_wav.sh clip.wav   (posts com.susurro.dev.feedWAV, object = "<bundle id>|<path>")
     private func installDevFeedHook() {
-        guard UserDefaults.standard.bool(forKey: "DevFeedHook") else { return }
+        guard settings.devFeedHook else { return }
         slog("dev: feed-WAV hook enabled")
         installDevProbeHook()
         DistributedNotificationCenter.default().addObserver(
@@ -1118,7 +1119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let app = NSWorkspace.shared.frontmostApplication
         hfPID = app?.processIdentifier
         hfBundleID = app?.bundleIdentifier
-        segmenter = PauseSegmenter()
+        segmenter = tuning.makeSegmenter()
         hfBuffer = []
         hfBufferStart = 0
         hfTotal = 0

@@ -17,7 +17,7 @@ enum FocusedFieldReader {
     nonisolated(unsafe) private static var enabledPIDs = Set<pid_t>()
     private static let lock = NSLock()
 
-    static func read(pid: pid_t, bundleID: String?, cap: Duration = .milliseconds(250)) async -> FieldSnapshot? {
+    static func read(pid: pid_t, bundleID: String?, cap: Duration = Tuning.default.axReadCap) async -> FieldSnapshot? {
         // A real cap (BEA-663, F5): a task group would wait for the
         // non-cancellable AX child; this returns nil at the cap and drops a
         // late result.
@@ -35,11 +35,11 @@ enum FocusedFieldReader {
             return FieldSnapshot(appBefore: before, appBridge: bridge.name)
         }
         let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, 0.2)
+        AXUIElementSetMessagingTimeout(app, Tuning.default.axMessagingTimeout)
         enableManualAccessibilityOnce(app: app, pid: pid)
 
         guard let focused: AXUIElement = copy(app, kAXFocusedUIElementAttribute) else { return .nothing }
-        AXUIElementSetMessagingTimeout(focused, 0.2)
+        AXUIElementSetMessagingTimeout(focused, Tuning.default.axMessagingTimeout)
 
         let role: String? = copy(focused, kAXRoleAttribute)
         let subrole: String? = copy(focused, kAXSubroleAttribute)
