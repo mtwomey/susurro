@@ -10,7 +10,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var recordItem: NSMenuItem!
     private var hotkeyItem: NSMenuItem!
-    private var latchItem: NSMenuItem!
+    private var modeItem: NSMenuItem!
     private var modelMenu: NSMenu!
     private var cleanupItem: NSMenuItem!
 
@@ -109,11 +109,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         keyItem.submenu = keyMenu
         menu.addItem(keyItem)
 
-        // Hands-free latch key (BEA-651): never the push-to-talk key.
-        latchItem = NSMenuItem(title: "Hands-Free Latch Key", action: nil, keyEquivalent: "")
-        latchItem.submenu = NSMenu(title: "Hands-Free Latch Key")
-        menu.addItem(latchItem)
-        rebuildLatchMenu()
+        // Mode key (BEA-651/BEA-691): cycles push-to-talk → hands-free → latch; never the push-to-talk key.
+        modeItem = NSMenuItem(title: "Mode Key (Hands-Free / Latch)", action: nil, keyEquivalent: "")
+        modeItem.submenu = NSMenu(title: "Mode Key (Hands-Free / Latch)")
+        menu.addItem(modeItem)
+        rebuildModeMenu()
 
         menu.addItem(.separator())
 
@@ -439,32 +439,32 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
               let choice = PTTKey.all.first(where: { $0.id == id }) else { return }
         hotkey.key = choice
         choice.save()
-        hotkey.latchKey = PTTKey.latch(for: choice)
-        rebuildLatchMenu()
+        hotkey.modeKey = PTTKey.modeKey(for: choice)
+        rebuildModeMenu()
         sender.menu?.items.forEach { $0.state = ($0 == sender) ? .on : .off }
         setHotkeyStatus("hold \(choice.title) to dictate")
         toast.show("Push-to-talk key is now \(choice.title)")
     }
 
-    private func rebuildLatchMenu() {
-        guard let latchMenu = latchItem?.submenu else { return }
-        latchMenu.removeAllItems()
-        for id in LatchKeyResolver.choices(ptt: hotkey.key.id) {
+    private func rebuildModeMenu() {
+        guard let modeMenu = modeItem?.submenu else { return }
+        modeMenu.removeAllItems()
+        for id in ModeKeyResolver.choices(ptt: hotkey.key.id) {
             guard let choice = PTTKey.all.first(where: { $0.id == id }) else { continue }
-            let item = NSMenuItem(title: choice.title, action: #selector(latchKeyAction(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: choice.title, action: #selector(modeKeyAction(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = choice.id
-            item.state = choice == hotkey.latchKey ? .on : .off
-            latchMenu.addItem(item)
+            item.state = choice == hotkey.modeKey ? .on : .off
+            modeMenu.addItem(item)
         }
     }
 
-    @objc private func latchKeyAction(_ sender: NSMenuItem) {
+    @objc private func modeKeyAction(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String,
               let choice = PTTKey.all.first(where: { $0.id == id }), choice != hotkey.key else { return }
-        PTTKey.saveLatch(choice)
-        hotkey.latchKey = PTTKey.latch(for: hotkey.key)
-        rebuildLatchMenu()
-        toast.show("Hands-free: hold \(hotkey.key.title), tap \(hotkey.latchKey.title)")
+        PTTKey.saveModeKey(choice)
+        hotkey.modeKey = PTTKey.modeKey(for: hotkey.key)
+        rebuildModeMenu()
+        toast.show("Hold \(hotkey.key.title), tap \(hotkey.modeKey.title) for hands-free, again for latch")
     }
 }

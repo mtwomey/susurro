@@ -17,6 +17,16 @@ final class DictationController {
     /// Cross-dictation joins (BEA-677): the previous push-to-talk insertion
     /// and its audio, kept so the next dictation can decide its full stop.
     private var xPrev: (record: CrossDictationJoin.Previous, samples: [Float], lastSpeech: Int)?
+    /// Latch (BEA-691): a latched chunk could not be delivered. The app
+    /// copies `text`, shows the pill, and ends latch (stays hands-free).
+    /// The report carries everything undelivered so far (clipboard text) and
+    /// whether this failure is the one that ended the latch (pill once).
+    var onLatchFailure: ((_ report: LatchSession.Report, _ pin: LatchPin) -> Void)?
+
+    private enum LatchPlan {
+        case insert(text: String, before: String, record: DictationRecord)
+        case contextFailed(text: String, failure: LatchFailure, record: DictationRecord)
+    }
 
     private let engine: () -> EngineLease?
     private let cleaner: () -> (any TextCleaning)?
@@ -43,7 +53,8 @@ final class DictationController {
     func transcribeAndInsert(_ samples: [Float], releasePID: pid_t?, releaseBundleID: String?,
                                      expectedPID: pid_t?, hfChunk: HFChunk? = nil,
                                      hfToken: Int? = nil,
-                                     trigger: DictationRecord.Trigger? = nil) -> Task<Void, Never>? {
+                                     trigger: DictationRecord.Trigger? = nil,
+                                     latch: LatchSession? = nil) -> Task<Void, Never>? {
         // The lease pins the engine this dictation started with across a model
         // switch (R8): it finishes on the old engine, which is freed once the
         // last such job ends.
@@ -62,7 +73,9 @@ final class DictationController {
         // Smart Spacing is the stage's master toggle — off means no read and
         // the old context-free behaviour (sentence case only).
         var fieldTask: Task<(FieldSnapshot?, Duration), Never>?
-        if settings.smartSpacingEnabled, !IsSecureEventInputEnabled(), let pid = releasePID {
+        // Latched chunks take their context from the pinned target, never
+        // from the frontmost field.
+        if latch == nil, settings.smartSpacingEnabled, !IsSecureEventInputEnabled(), let pid = releasePID {
             fieldTask = Task.detached(priority: .userInitiated) {
                 let clock = ContinuousClock(), start = clock.now
                 let snapshot = await FocusedFieldReader.read(pid: pid, bundleID: releaseBundleID)
@@ -70,6 +83,16 @@ final class DictationController {
             }
         }
         let pendingFieldRead = fieldTask
+        // Latch: read the context at the pin while the chunk transcribes
+        // (docs/BRIDGES.md §6), not after. This job runs only after the
+        // previous chunk's insert finished, and the session serialises calls.
+        let pendingLatchContext: Task<(LatchBridgeReply, Duration), Never>? = latch.map { session in
+            Task.detached(priority: .userInitiated) {
+                let clock = ContinuousClock(), start = clock.now
+                let reply = await session.context()
+                return (reply, clock.now - start)
+            }
+        }
         return Task.detached(priority: .userInitiated) {
             defer { withExtendedLifetime(lease) {} }
             let clock = ContinuousClock()
@@ -93,9 +116,13 @@ final class DictationController {
             // what precedes the cursor.
             let cleaned = await pipeline.cleanDictation(transcript)
             Log.transcript(raw: raw, cleaned: cleaned)
+            // Latch: context at the pin (off the main actor; socket/CLI trip).
+            let latchContextResult = await pendingLatchContext?.value
+            let latchContext = latchContextResult?.0
             let fieldResult = await pendingFieldRead?.value
             let fieldRead = fieldResult?.0
-            timings.axRead = fieldResult?.1
+            // Context-read time: the AX field read, or the latch pin's context read.
+            timings.axRead = fieldResult?.1 ?? latchContextResult?.1
             let autoCapitalize = postProcessor.autoCapitalizeEnabled
             // Hands-free joins (BEA-657): hold this chunk's final mark; if the
             // previous chunk's mark is held, decide it from a joint transcript.
@@ -145,6 +172,44 @@ final class DictationController {
             started.transcriptionFailed = transcriptionFailed
             started.app = releaseBundleID
             let recordBase = started
+            if let latch {
+                // Latch (BEA-691): plan on the main actor, insert through the
+                // bridge off it (socket/CLI round trip), report on it again.
+                // Still one queue job, so chunks land strictly in order.
+                let planned = await MainActor.run { [weak self] () -> LatchPlan? in
+                    guard let self else { return nil }
+                    var record = recordBase
+                    guard self.gate.isCurrent(hfToken) else {
+                        record.outcome = .dropped
+                        record.emit()
+                        return nil
+                    }
+                    guard !processed.isEmpty || joinText != nil else {
+                        record.outcome = .empty
+                        record.emit()
+                        return nil
+                    }
+                    return self.planLatched(processed: processed, join: join, latch: latch,
+                                            contextReply: latchContext ?? .unavailable,
+                                            engine: engine.kind, autoCapitalize: autoCapitalize,
+                                            startedAt: startedAt, record: record)
+                }
+                switch planned {
+                case nil:
+                    return
+                case .contextFailed(let text, let failure, let record)?:
+                    let report = await latch.fail(text, because: failure)
+                    await MainActor.run { [weak self] in
+                        self?.completeLatched(report, text: text, pin: latch.pin, record: record)
+                    }
+                case .insert(let text, let before, let record)?:
+                    let report = await latch.deliver(text, contextBefore: before)
+                    await MainActor.run { [weak self] in
+                        self?.completeLatched(report, text: text, pin: latch.pin, record: record)
+                    }
+                }
+                return
+            }
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 var record = recordBase
@@ -259,5 +324,60 @@ final class DictationController {
                 if let toast = result.toast { self.toast.show(toast) }
             }
         }
+    }
+
+    /// Latch delivery (BEA-691): plan the piece from the context at the pin,
+    /// insert through the target's bridge, verify the read-back. Any failure:
+    /// the text goes to the clipboard and latch ends — never another app.
+    /// Shown-mark mode is off here (context source is not "readable"), so a
+    /// held end mark is only ever appended, never retracted with Backspace.
+    /// Returns (text to insert, context before, record), or nil when there
+    /// is nothing to insert or the target already failed (handled here).
+    private func planLatched(processed: String, join: InsertPlan.Join, latch: LatchSession,
+                             contextReply: LatchBridgeReply, engine: EngineKind,
+                             autoCapitalize: Bool, startedAt: Date,
+                             record: DictationRecord) -> LatchPlan? {
+        var record = record
+        let fallback = InsertPlan.appSwitchClipboardText(processed: processed, join: join)
+        if let failure = LatchDelivery.contextFailure(contextReply), case .failed(let why) = failure {
+            return .contextFailed(text: fallback, failure: why, record: record)
+        }
+        guard case .value(let before) = contextReply else { return nil }
+        let context = InsertContext(before: before, source: .selfTracked, bundleID: latch.pin.bundleID,
+                                    engine: engine)
+        let stage = TextHandlingStage.standard(smartSpacing: settings.smartSpacingEnabled,
+                                               autoCapitalize: autoCapitalize)
+        let plan = InsertPlan.make(processed: processed, join: join, isHandsFree: true,
+                                   expectedPID: nil, frontmostPID: nil, context: context, stage: stage,
+                                   secureInput: false, heldMark: joiner.held?.mark, cross: nil,
+                                   startedAt: startedAt, fieldValue: nil)
+        guard case .insert(let text, _) = plan.action, !text.isEmpty else {
+            record.outcome = .nothingToType
+            record.emit()
+            return nil
+        }
+        return .insert(text: text, before: before, record: record)
+    }
+
+    private func completeLatched(_ report: LatchSession.Report, text: String, pin: LatchPin,
+                                 record: DictationRecord) {
+        var record = record
+        if case .failed = report.outcome {
+            joiner.discard()
+            onLatchFailure?(report, pin)
+            record.outcome = .clipboardAppSwitch
+        } else {
+            record.outcome = .inserted
+            Log.handsfree.event("latch chunk delivered (\(text.count) chars)")
+        }
+        record.emit()
+    }
+
+    /// Latch stop: append the held end mark at the pin (never the frontmost app).
+    func finishLatched(_ latch: LatchSession) async {
+        prevChunk = nil
+        guard let mark = joiner.stop() else { return }
+        let report = await latch.deliver(String(mark))
+        if case .failed = report.outcome { onLatchFailure?(report, latch.pin) }
     }
 }

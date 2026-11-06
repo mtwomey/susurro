@@ -148,19 +148,30 @@ Sources/
                               SelectionRange, EmptyValue, TextMarker, AnchoredValue,
                               AppBridge, Memory; InsertContext.resolve = first answer
                               wins; secure input → nothing read
-    EmacsServerProtocol.swift emacsclient line protocol (encode/decode) for the Emacs
-                              app bridge
+    Bridges/                  app bridges (docs/BRIDGES.md): AppBridge /
+                              ContextReadingBridge / LatchingBridge protocols;
+                              BridgeRegistry (the one list); LatchPolicy.engage
+                              (allowlist → bridge → pin, typed LatchRefusal);
+                              LatchSession (actor on its own serial queue: ordered
+                              calls, single failure, appended clipboard, release
+                              once); LatchToken (launch nonce); Transports/
+                              (UnixSocketClient, ProcessRunner); Emacs/, Obsidian/,
+                              AX/ — one folder per bridge (codec + bridge)
     CrossDictationJoin.swift  (BEA-677) eligibility guard for joining a dictation to
                               Susurro's previous one (Previous, Current, check,
                               worthDeciding, decide, edit, speechBounds, logLine):
                               removes the previous "." only when every check proves
                               it is still the last thing before the cursor
     -- hands-free --
-    HandsFreeMachine.swift    hands-free state machine (idle/holding/latchedHeld/
-                              latched/…): key events + ticks in, effects out
-                              (startRecording, latched, stopAndInsert, cancel,
-                              warnAutoStop); idle 60 s / 2 h safety auto-stop;
-                              app switch stops. Pure value type, no clock/AppKit
+    HandsFreeMachine.swift    recording-mode machine (BEA-691): mode-key taps while
+                              PTT is held cycle push-to-talk → hands-free → latch;
+                              states idle/holding/handsFreeHeld/handsFree/latchHeld/
+                              latched/latchStopping/awaitingRelease; effects
+                              startRecording, handsFree, requestLatch, pushToTalk,
+                              stopAndInsert, cancel, warnAutoStop; latchRefused/
+                              latchEnded → hands-free; idle 60 s / 2 h auto-stop;
+                              app switch stops hands-free, not latch; bare Esc not
+                              captured in latch (PTT+Esc discards). Pure value type
     HandsFreeSession.swift    (R4) hands-free audio plumbing: AudioSource protocol;
                               pump (drain + segment → speech chunks, heardSpeech),
                               finish (flush the last segment), discard. Pure;
@@ -214,18 +225,17 @@ Sources/
                               GeneralPasteboard, SystemFrontmostApp (NSWorkspace +
                               secure-input state)
     HotkeyMonitor.swift       CGEventTap; PTTKey = modifier (flagsChanged) or regular
-                              key (keyDown/up, swallowed); latch key + Esc (Esc only
-                              swallowed while latched); auto re-enables disabled taps
+                              key (keyDown/up, swallowed); mode key + Esc (Esc only
+                              swallowed hands-free, or with PTT in latch); auto re-enables disabled taps
     TextInjector.swift        CGEvent unicode typing, 18-UTF16-unit chunks, Return for
                               newlines; deleteBackward (guarded shown-mark retraction)
     FocusedFieldReader.swift  Accessibility read of the focused element into a
                               FieldSnapshot, off-main, capped via CappedRead at
                               Tuning.axReadCap (250 ms; nil on timeout); secure
                               fields never read; enables AX on Electron apps;
-                              consults AppBridges
-    AppBridges.swift          per-bundle-ID last-resort bridges; Emacs: one request
-                              on the running Emacs server's socket (~2-35 ms), never
-                              the minibuffer
+                              consults BridgeRegistry.standard.contextReader
+                              (Emacs: one request on the server socket, ~2-35 ms,
+                              never the minibuffer)
     TextHandlingLog.swift     per-app coverage file: DictationRecord.line for each
                               dictation that reached the insert step (lengths and
                               numbers only, never field text), rotated at 1 MB
@@ -298,7 +308,7 @@ key down (CGEventTap callback, main runloop)
       engine not ready → toast with EngineController.unavailableMessage
       AudioRecorder.start()          AVAudioEngine tap begins accumulating samples
       OverlayController.show()       non-activating panel; focus untouched
-key up (not latched)
+key up (push-to-talk mode)
   → .stopAndInsert → pttReleased: samples = recorder.stop(); overlay.hide()
   → insertionQueue.enqueue { dictation.transcribeAndInsert(samples,
         releasePID: frontmost, expectedPID: nil) }
@@ -306,10 +316,47 @@ key up (not latched)
 
 The dev feed hook (`DevHooks`) enqueues a WAV the same way.
 
-### Hands-free (latched)
+### Latch (BEA-691)
 
 ```
-hold PTT, tap latch key   → HandsFreeMachine .latched → hfBegin
+hold PTT, tap mode key ×2 → HandsFreeMachine .requestLatch → hfRequestLatch: the tap
+                            callback returns at once; on a GCD queue
+                            LatchPolicy.engage: LatchAllowlist.bundled (bundle ID →
+                            BridgeID; Codable) → BridgeRegistry → bridge.pin
+                              EmacsBridge    marker (insertion type t), selected buffer
+                              ObsidianBridge CLI `version` gate (app version ≥ 1.14.5,
+                                cached per pid) + `eval` pin (markdown leaf; CM6
+                                EditorView.update wrapped once → ChangeSet.mapPos)
+                              refused → bridge pill or "Latching isn't supported in
+                                <app>", .latchRefused → stays hands-free
+                            result applied on main only if the request is still
+                            current (LatchToken); a stale pin is released
+per chunk (same queue job)  LatchSession.context() starts while the chunk transcribes
+                            → InsertPlan from that context (source selfTracked: marks
+                            appended, never retracted) → LatchSession.deliver (exact
+                            read-back). First failure: pill + .latchEnded → hands-free;
+                            every undelivered chunk is appended to the clipboard; later
+                            calls never reach the app. Never the frontmost app.
+stop / discard / 3rd tap    end mark at the pin; session released (after any in-flight
+                            insert); overlay cleared
+overlay                     purple ring, target icon, "LATCH · App — document";
+                            click (hands-free or latch) → stop and keep. Bare Esc not captured in latch;
+                            PTT+Esc discards (stop fires on PTT release).
+```
+
+TextEdit (AXSelectedTextLatchTarget) is built but OFF: the in-app undo check
+(BEA-691, new untitled document, two chunks written from the background with
+Zen frontmost, read-back exact) showed one Cmd+Z removes *all* latched chunks
+at once ("Base alpha. beta." → "Base"); further Cmd+Z did nothing. Not
+corrupt, but a single undo erasing a whole latch session fails "sane".
+Undo in Obsidian: `isolateHistory` is not reachable from `eval`; CM6's
+500 ms grouping applies and chunks are cut at pauses. Opt-in live tests on
+scratch targets: `SUSURRO_EMACS_IT=1` / `SUSURRO_OBSIDIAN_IT=1 swift test`.
+
+### Hands-free
+
+```
+hold PTT, tap mode key    → HandsFreeMachine .handsFree → hfBegin
                             remembers frontmost pid/bundle, fresh HandsFreeSession,
                             fresh HeldMarkJoiner on DictationController; 100 ms
                             Timer → hfPump; observes app activation
@@ -388,7 +435,7 @@ Task.detached — DictationPipeline:
 
 - Master toggle: Smart Spacing. Off → no AX read, sentence case only.
 - The app target only *collects* facts (`FocusedFieldReader` → `FieldSnapshot`,
-  `AppBridges`); all interpretation is pure code in SusurroCore
+  `BridgeRegistry` context readers); all interpretation is pure code in SusurroCore
   (`ContextProviders`, `TextHandling`) and is unit-tested.
 - Providers key on the field's shape, not on bundle IDs; adding an app class
   means adding a provider. App bridges are the only per-app code and run

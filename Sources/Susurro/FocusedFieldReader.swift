@@ -31,7 +31,7 @@ enum FocusedFieldReader {
         if IsSecureEventInputEnabled() { return .secureField }
         // Per-app bridge first, only for its own app; when it answers, the
         // Accessibility read is skipped entirely.
-        if let bridge = AppBridges.bridge(for: bundleID), let before = bridge.textBeforeCursor() {
+        if let bridge = BridgeRegistry.standard.contextReader(for: bundleID), let before = bridge.textBeforeCursor() {
             return FieldSnapshot(appBefore: before, appBridge: bridge.name)
         }
         let app = AXUIElementCreateApplication(pid)
