@@ -889,7 +889,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                      hfToken: Int? = nil) -> Task<Void, Never>? {
         guard let engine else { return nil }
         let postProcessor = postProcessor
-        let cleaner = cleanupEnabled ? self.cleaner : nil
+        // Transcript side of the dictation (BEA-664, R2): the same pipeline
+        // susurro-cli runs, so the eval harness exercises this code.
+        let pipeline = DictationPipeline(engine: engine, postProcessor: postProcessor,
+                                         cleaner: cleanupEnabled ? self.cleaner : nil)
         // Text handling (BEA-648): read the focused field through
         // Accessibility while the engine transcribes; capped at 250 ms.
         // Smart Spacing is the stage's master toggle — off means no read and
@@ -921,10 +924,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let raw = TranscriptFilter.stripHallucinations(transcript, engine: engine.kind)
             // Sentence case is deferred to the pre-insert stage, which can see
             // what precedes the cursor.
-            var cleaned = raw.isEmpty ? "" : postProcessor.process(raw, applySentenceCase: false)
-            if let cleaner, !cleaned.isEmpty {
-                cleaned = await cleaner.clean(cleaned) ?? cleaned
-            }
+            let cleaned = await pipeline.cleanDictation(transcript)
             slog("ptt: transcript: \(raw) -> \(cleaned)")
             let fieldResult = await pendingFieldRead?.value
             let fieldRead = fieldResult?.0
@@ -948,27 +948,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.hfPrevChunk = hfChunk
                     return (plan, previous)
                 }
-                switch step {
-                case (.fresh(let text), _)?:
-                    processed = text
-                case (.needsJoin(let held, let next), let previous?)?:
-                    let clip = HandsFreeJoin.jointClip(a: previous.samples, aLastSpeechEnd: previous.lastSpeech,
-                                                       b: hfChunk.samples, bFirstSpeechStart: hfChunk.firstSpeech)
-                    let joinStart = clock.now
-                    let jointRaw = (try? engine.transcribe(samples: clip)) ?? ""
-                    timings.joinTranscribe = clock.now - joinStart
-                    let joint = postProcessor.process(TranscriptFilter.stripHallucinations(jointRaw, engine: engine.kind),
-                                                      applySentenceCase: false)
-                    let decision = HandsFreeJoin.decide(previousBody: held.body, jointText: joint)
-                    slog("handsfree: join decision=\(decision) held=\(held.mark)")
-                    joinedText = HandsFreeJoin.joined(mark: held.mark, decision: decision, next: next)
-                    heldBody = held.body
-                    heldShown = held.shown
-                    heldMark = held.mark
-                    joinDecision = decision
-                    processed = next
-                default:
-                    break
+                if let step {
+                    let (plan, previous) = step
+                    var jointTime: Duration?
+                    let result = try? pipeline.handsFreeStep(plan, previous: previous, current: hfChunk,
+                                                             jointSeconds: &jointTime, failedJointAsEmpty: true)
+                    if let jointTime { timings.joinTranscribe = jointTime }
+                    switch result {
+                    case .fresh(let text)?:
+                        processed = text
+                    case .joined(let held, let decision, let next, let joined)?:
+                        slog("handsfree: join decision=\(decision) held=\(held.mark)")
+                        joinedText = joined
+                        heldBody = held.body
+                        heldShown = held.shown
+                        heldMark = held.mark
+                        joinDecision = decision
+                        processed = next
+                    default:
+                        break
+                    }
                 }
             }
             // Cross-dictation join (BEA-677): a separate dictation right after
@@ -978,17 +977,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             var xDecision: HandsFreeJoin.Decision?
             if hfChunk == nil, !processed.isEmpty {
                 let prev = await MainActor.run { [weak self] in self?.xPrev }
-                if let prev, CrossDictationJoin.worthDeciding(previous: prev.record, pid: releasePID, startedAt: startedAt),
-                   let bounds = CrossDictationJoin.speechBounds(samples) {
-                    let clip = HandsFreeJoin.jointClip(a: prev.samples, aLastSpeechEnd: prev.lastSpeech,
-                                                       b: samples, bFirstSpeechStart: bounds.first)
-                    let joinStart = clock.now
-                    let jointRaw = (try? engine.transcribe(samples: clip)) ?? ""
-                    timings.joinTranscribe = clock.now - joinStart
-                    let joint = postProcessor.process(TranscriptFilter.stripHallucinations(jointRaw, engine: engine.kind),
-                                                      applySentenceCase: false)
-                    xDecision = CrossDictationJoin.decide(previous: prev.record, jointText: joint)
-                }
+                var jointTime: Duration?
+                xDecision = try? pipeline.crossDecision(
+                    previous: prev?.record,
+                    previousAudio: prev.map { .init(samples: $0.samples, firstSpeech: 0, lastSpeech: $0.lastSpeech) },
+                    samples: samples, pid: releasePID, startedAt: startedAt,
+                    jointSeconds: &jointTime, failedJointAsEmpty: true)
+                if let jointTime { timings.joinTranscribe = jointTime }
             }
             let crossDecision = xDecision
             let joinText = joinedText
@@ -1347,8 +1342,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 /// One hands-free chunk's audio plus where its speech starts/ends (relative
 /// sample indices), kept so the next chunk can build a joint clip (BEA-657).
-struct HFChunk: Sendable {
-    let samples: [Float]
-    let firstSpeech: Int
-    let lastSpeech: Int
-}
+typealias HFChunk = DictationPipeline.ChunkAudio

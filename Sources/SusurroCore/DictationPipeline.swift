@@ -56,6 +56,13 @@ public struct DictationPipeline: Sendable {
         clean(try engine.transcribe(samples: clip))
     }
 
+    /// `jointText`, or "" when `failedAsEmpty` and the engine throws (the
+    /// app's policy: a failed joint clip decides nothing → `.unmatched`).
+    func jointText(_ clip: [Float], failedAsEmpty: Bool) throws -> String {
+        guard failedAsEmpty else { return try jointText(clip) }
+        return clean((try? engine.transcribe(samples: clip)) ?? "")
+    }
+
     /// The previous hands-free chunk's audio, for the joint clip.
     public struct ChunkAudio: Sendable {
         public let samples: [Float]
@@ -84,7 +91,7 @@ public struct DictationPipeline: Sendable {
     /// Decide a hands-free join for `plan` (from `HeldMarkJoiner.accept`).
     /// `jointSeconds` receives the joint transcription time, if any.
     public func handsFreeStep(_ plan: HeldMarkJoiner.Plan, previous: ChunkAudio?, current: ChunkAudio,
-                              jointSeconds: inout Duration?) throws -> HandsFreeStep {
+                              jointSeconds: inout Duration?, failedJointAsEmpty: Bool = false) throws -> HandsFreeStep {
         switch plan {
         case .fresh(let text):
             return .fresh(text: text)
@@ -93,7 +100,7 @@ public struct DictationPipeline: Sendable {
             let clip = HandsFreeJoin.jointClip(a: previous.samples, aLastSpeechEnd: previous.lastSpeech,
                                                b: current.samples, bFirstSpeechStart: current.firstSpeech)
             let clock = ContinuousClock(), start = clock.now
-            let joint = try jointText(clip)
+            let joint = try jointText(clip, failedAsEmpty: failedJointAsEmpty)
             jointSeconds = clock.now - start
             let decision = HandsFreeJoin.decide(previousBody: held.body, jointText: joint)
             return .joined(held: held, decision: decision, next: next,
@@ -106,14 +113,15 @@ public struct DictationPipeline: Sendable {
     /// field guards then leave the previous text alone).
     public func crossDecision(previous: CrossDictationJoin.Previous?, previousAudio: ChunkAudio?,
                               samples: [Float], pid: pid_t?, startedAt: Date,
-                              jointSeconds: inout Duration?) throws -> HandsFreeJoin.Decision? {
+                              jointSeconds: inout Duration?,
+                              failedJointAsEmpty: Bool = false) throws -> HandsFreeJoin.Decision? {
         guard let previous, let previousAudio,
               CrossDictationJoin.worthDeciding(previous: previous, pid: pid, startedAt: startedAt),
               let bounds = CrossDictationJoin.speechBounds(samples) else { return nil }
         let clip = HandsFreeJoin.jointClip(a: previousAudio.samples, aLastSpeechEnd: previousAudio.lastSpeech,
                                            b: samples, bFirstSpeechStart: bounds.first)
         let clock = ContinuousClock(), start = clock.now
-        let joint = try jointText(clip)
+        let joint = try jointText(clip, failedAsEmpty: failedJointAsEmpty)
         jointSeconds = clock.now - start
         return CrossDictationJoin.decide(previous: previous, jointText: joint)
     }
