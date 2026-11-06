@@ -310,6 +310,34 @@ key up (push-to-talk mode)
 
 The dev feed hook (`DevHooks`) enqueues a WAV the same way.
 
+### Latch (BEA-691)
+
+```
+hold PTT, tap mode key ×2 → HandsFreeMachine .requestLatch → hfRequestLatch
+                            LatchAllowlist.bundled (bundle ID → method; Codable for a
+                            later remote list) → LatchTargets.pin:
+                              org.gnu.Emacs → EmacsServerBridge.latchPin (marker,
+                                insertion type t, in the selected buffer)
+                              md.obsidian   → ObsidianCLI `version` gate (app version
+                                ≥ 1.14.5) + `eval` ObsidianLatchJS.pin (markdown leaf;
+                                CM6 EditorView.update wrapped once → ChangeSet.mapPos)
+                              anything else → pill "Latching isn't supported in <app>",
+                                .latchRefused → stays hands-free
+per chunk (same queue job)  context at the pin (off main) → InsertPlan from that
+                            context (source selfTracked: marks appended, never
+                            retracted) → LatchTarget.insert off main → exact read-back
+                            (LatchDelivery.verify); failure → clipboard + pill +
+                            .latchEnded → hands-free. Never the frontmost app.
+stop / discard / 3rd tap    end mark at the pin; marker/pin released; overlay cleared
+overlay                     purple ring, target icon, "LATCH · App — document";
+                            click → Stop / Discard. Bare Esc not captured in latch;
+                            PTT+Esc discards (stop fires on PTT release).
+```
+
+Undo in Obsidian: `isolateHistory` is not reachable from `eval`; CM6's
+500 ms grouping applies and chunks are cut at pauses. Opt-in live tests on
+scratch targets: `SUSURRO_EMACS_IT=1` / `SUSURRO_OBSIDIAN_IT=1 swift test`.
+
 ### Hands-free
 
 ```

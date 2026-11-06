@@ -82,6 +82,9 @@ Access, or edit `SIGN_ID` in the Makefile.
 - **Rules** (spoken punctuation, jargon substitutions, regex): menu →
   **Edit Rules…** — changes apply on your next dictation
 - **Push-to-talk key**: menu → **Push-to-Talk Key**
+- **Latch**: tap the mode key a second time while holding to tie the text to
+  the current Emacs buffer or Obsidian note while you work elsewhere (other
+  apps say "Latching isn't supported" and stay hands-free)
 - **Mode key** (hands-free, then latch): menu → **Mode Key (Hands-Free / Latch)** (offers only the
   keys that aren't push-to-talk)
 - **Models**: menu → **Model**; downloads go to
