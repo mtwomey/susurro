@@ -16,7 +16,9 @@ struct ObsidianLatchIntegrationTests {
     }
 
     @Test func pinInsertMapsThroughEditsAndDetectsClose() {
-        let id = 9_902
+        let id = LatchToken.make(nonce: 333, counter: 1)
+        // A pin left by a "crashed" launch (other nonce): pin must sweep it.
+        _ = eval("(()=>{(window.__susurroLatch=window.__susurroLatch||{})['111000001']={cm:null};return '{}';})()")
         // Scratch note in a background tab; pin it with the real pin snippet
         // while it is briefly the active leaf (no focus), then restore.
         let setup = eval("""
@@ -29,6 +31,8 @@ struct ObsidianLatchIntegrationTests {
         let pinned = ObsidianLatchJS.decode(setup)
         #expect(pinned?.ok == true, "setup: \(setup)")
         #expect(pinned?.name == "susurro-latch-it-scratch")
+        let keys = eval("(()=>JSON.stringify({ctx:Object.keys(window.__susurroLatch||{}).join(',')}))()")
+        #expect(ObsidianLatchJS.decode(keys)?.ctx == String(id))
         defer {
             _ = eval(ObsidianLatchJS.release(id: id))
             _ = eval("""

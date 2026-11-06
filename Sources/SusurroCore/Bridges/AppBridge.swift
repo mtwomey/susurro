@@ -51,3 +51,25 @@ public protocol LatchingBridge: AppBridge {
 extension LatchingBridge {
     public func refusalPill(for error: BridgeError) -> String? { nil }
 }
+
+/// Pin tokens (docs/BRIDGES.md §7): a per-launch nonce plus a counter,
+/// never derived from input. Every token of one launch shares the decimal
+/// prefix `nonce` (3 digits; counter < 1e6), so a bridge can sweep up pins a
+/// previous, crashed launch left behind in the app.
+public enum LatchToken {
+    public static let nonce = Int.random(in: 100...999)
+    private static let counter = Counter()
+
+    public static func next() -> Int { make(nonce: nonce, counter: counter.increment()) }
+
+    public static func make(nonce: Int, counter: Int) -> Int { nonce * 1_000_000 + counter % 1_000_000 }
+
+    /// The launch nonce a token belongs to.
+    public static func nonce(of token: Int) -> Int { token / 1_000_000 }
+
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        func increment() -> Int { lock.withLock { value += 1; return value } }
+    }
+}

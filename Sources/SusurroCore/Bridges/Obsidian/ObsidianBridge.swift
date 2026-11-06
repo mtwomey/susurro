@@ -14,7 +14,7 @@ public struct ObsidianBridge: LatchingBridge {
     public init() {}
 
     public func pin(_ request: LatchPinRequest) throws(BridgeError) -> any LatchTarget {
-        guard let version = cli.appVersion() else { throw .notEnabled }
+        guard let version = Self.versions.version(pid: request.pid, fetch: { cli.appVersion() }) else { throw .notEnabled }
         guard ObsidianLatchJS.supported(version) else {
             throw .unsupportedVersion(found: version, minimum: ObsidianLatchJS.minimumVersion)
         }
@@ -30,6 +30,24 @@ public struct ObsidianBridge: LatchingBridge {
         case .notEnabled: return ObsidianLatchJS.cliOffPill
         case .unsupportedVersion: return ObsidianLatchJS.versionPill
         default: return nil
+        }
+    }
+}
+
+extension ObsidianBridge {
+    /// The app version per Obsidian process: an app can't change version
+    /// without restarting, so a pin needs one CLI spawn, not two. A failed
+    /// read (CLI off) is not cached, so turning the CLI on works at once.
+    static let versions = VersionCache()
+
+    final class VersionCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var byPID: [Int32: [Int]] = [:]
+        func version(pid: Int32, fetch: () -> [Int]?) -> [Int]? {
+            if let cached = lock.withLock({ byPID[pid] }) { return cached }
+            guard let v = fetch() else { return nil }
+            lock.withLock { byPID[pid] = v }
+            return v
         }
     }
 }

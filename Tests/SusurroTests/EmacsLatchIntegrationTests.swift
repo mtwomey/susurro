@@ -5,7 +5,7 @@ import Testing
 /// Live check of the Emacs latch Lisp against a hidden scratch buffer in the
 /// running Emacs server (never the user's buffers; never takes focus).
 /// Opt-in: SUSURRO_EMACS_IT=1 swift test --filter EmacsLatchIntegration
-@Suite(.enabled(if: ProcessInfo.processInfo.environment["SUSURRO_EMACS_IT"] == "1"))
+@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["SUSURRO_EMACS_IT"] == "1"))
 struct EmacsLatchIntegrationTests {
     static let buf = " *susurro-latch-test*"
 
@@ -20,7 +20,7 @@ struct EmacsLatchIntegrationTests {
     }
 
     @Test func markerInsertReadBackTracksEditsAndDetectsKill() {
-        let id = 9_901, sym = EmacsLatchLisp.markerSymbol(id)
+        let id = LatchToken.make(nonce: 222, counter: 2), sym = EmacsLatchLisp.markerSymbol(id)
         // Scratch setup standing in for pin(): hidden buffer, marker at end.
         _ = eval("""
         (with-current-buffer (get-buffer-create "\(Self.buf)") (erase-buffer) (insert "Hello") \
@@ -39,5 +39,20 @@ struct EmacsLatchIntegrationTests {
         #expect(run((EmacsLatchLisp.context(id: id))) == .gone)
         #expect(run((EmacsLatchLisp.release(id: id))) == .value("OK"))
         #expect(eval("(if (boundp '\(sym)) \"t\" \"nil\")") == "nil")
+    }
+
+    @Test func sweepReleasesOtherLaunchesOnly() {
+        let stale = EmacsLatchLisp.markerSymbol(LatchToken.make(nonce: 111, counter: 1))
+        let mine = EmacsLatchLisp.markerSymbol(LatchToken.make(nonce: 222, counter: 1))
+        _ = eval("""
+        (with-current-buffer (get-buffer-create "\(Self.buf)") (insert "x") \
+        (defvar \(stale) nil) (setq \(stale) (copy-marker (point-max) t)) \
+        (defvar \(mine) nil) (setq \(mine) (copy-marker (point-max) t)) t)
+        """)
+        _ = eval(EmacsLatchLisp.sweep(currentNonce: 222))
+        #expect(eval("(if (intern-soft \"\(stale)\") \"t\" \"nil\")") == "nil")
+        #expect(eval("(if (and (boundp '\(mine)) (markerp \(mine))) \"t\" \"nil\")") == "t")
+        _ = eval(EmacsLatchLisp.release(id: LatchToken.make(nonce: 222, counter: 1)))
+        _ = eval("(kill-buffer \"\(Self.buf)\")")
     }
 }

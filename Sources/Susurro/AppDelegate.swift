@@ -32,7 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hfAppObserver: NSObjectProtocol?
     /// Latch (BEA-691): the pinned target, nil unless latched.
     private var hfLatch: LatchSession?
-    private var latchToken = Int(Date().timeIntervalSince1970) % 100_000
+    /// The current latch request; any bump makes an in-flight pin stale.
+    private var latchToken = LatchToken.next()
     /// One FIFO for every insertion, push-to-talk and hands-free (BEA-665, R3).
     private let insertionQueue = InsertionQueue()
     /// Keystrokes, clipboard/secure-input/app-switch policy and the
@@ -275,7 +276,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Pin off the main thread (docs/BRIDGES.md defect 1): the tap
         // callback returns at once; the bridge talks to the app on a GCD
         // queue; the result is applied only if this request is still current.
-        latchToken += 1
+        latchToken = LatchToken.next()
         let token = latchToken
         guard hfTimer != nil, let app, app.processIdentifier == hfPID, let bundleID = app.bundleIdentifier else {
             toast.show(LatchDelivery.notSupportedPill(appName: name))
@@ -340,7 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Back to push-to-talk while held: release any latch pin.
     private func hfDropLatch() {
-        latchToken += 1   // a pin still in flight becomes stale
+        latchToken = LatchToken.next()   // a pin still in flight becomes stale
         releaseLatch()
         Log.handsfree.event("push-to-talk")
     }
@@ -403,7 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dictation.gate.cancel() // drop chunks not yet typed, incl. one mid-transcription
             dictation.joiner.discard() // and the held mark with them
             dictation.prevChunk = nil
-            latchToken += 1
+            latchToken = LatchToken.next()
             releaseLatch()
         }
         Log.handsfree.event("ended insert=\(insert) reason=\(String(describing: reason)) samples=\(hfSession.total)")

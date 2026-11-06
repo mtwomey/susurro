@@ -30,6 +30,7 @@ public enum ObsidianLatchJS {
         (()=>{const l=app.workspace.activeLeaf;const v=l&&l.view;\
         if(!v||v.getViewType()!=='markdown'||!v.editor||!v.editor.cm||!v.file)return JSON.stringify({ok:false});\
         const ed=v.editor,cm=ed.cm;const S=(window.__susurroLatch=window.__susurroLatch||{});\
+        \(sweep(currentNonce: LatchToken.nonce(of: id)))\
         S[\(id)]={leaf:l.id,path:v.file.path,pos:ed.posToOffset(ed.getCursor('to')),cm:cm};\
         if(!cm.__susurroWrapped){const orig=Object.getPrototypeOf(cm).update;\
         cm.update=function(trs){for(const tr of trs){if(!tr.docChanged)continue;\
@@ -61,6 +62,16 @@ public enum ObsidianLatchJS {
         if(st.pos!==p+t.length)st.pos=p+t.length;\
         const back=ed.getRange(ed.offsetToPos(p),ed.offsetToPos(p+t.length));\
         return JSON.stringify({ctx:ctx,back:back});})()
+        """
+    }
+
+    /// Drop pins left by other (crashed) launches, then unwrap any editor
+    /// whose wrapper no longer serves a pin. Runs inside `pin` (uses `S`).
+    public static func sweep(currentNonce: Int) -> String {
+        """
+        for(const k of Object.keys(S)){if(!k.startsWith('\(currentNonce)'))delete S[k];}\
+        for(const lf of app.workspace.getLeavesOfType('markdown')){const c=lf.view&&lf.view.editor&&lf.view.editor.cm;\
+        if(c&&c.__susurroWrapped&&!Object.values(S).some(x=>x.cm===c)){delete c.update;delete c.__susurroWrapped;}}
         """
     }
 

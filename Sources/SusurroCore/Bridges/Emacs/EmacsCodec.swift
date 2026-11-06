@@ -105,10 +105,23 @@ public enum EmacsLatchLisp {
         let sym = markerSymbol(id)
         return """
         (let* ((w (selected-window)) (b (window-buffer w))) \
+        \(sweep(currentNonce: LatchToken.nonce(of: id))) \
         (if (minibufferp b) "SKIP" \
         (progn (defvar \(sym) nil) \
         (setq \(sym) (with-current-buffer b (copy-marker (window-point w) t))) \
         (base64-encode-string (encode-coding-string (buffer-name b) 'utf-8) t))))
+        """
+    }
+
+    /// Release markers left by other (crashed) launches: every
+    /// `susurro--latch-<token>` whose token doesn't carry this launch's nonce.
+    public static func sweep(currentNonce: Int) -> String {
+        """
+        (let (stale) (mapatoms (lambda (s) (let ((n (symbol-name s))) \
+        (when (and (string-prefix-p "susurro--latch-" n) \
+        (not (string-prefix-p "susurro--latch-\(currentNonce)" n))) (push s stale))))) \
+        (dolist (s stale) (when (and (boundp s) (markerp (symbol-value s))) (set-marker (symbol-value s) nil)) \
+        (makunbound s) (unintern s obarray)))
         """
     }
 
@@ -164,7 +177,7 @@ public enum EmacsLatchLisp {
         let sym = markerSymbol(id)
         return """
         (progn (when (and (boundp '\(sym)) (markerp \(sym))) (set-marker \(sym) nil)) \
-        (makunbound '\(sym)) (base64-encode-string "OK" t))
+        (makunbound '\(sym)) (unintern "\(sym)" obarray) (base64-encode-string "OK" t))
         """
     }
 }
