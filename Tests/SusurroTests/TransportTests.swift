@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import SusurroCore
 
@@ -84,14 +85,17 @@ private final class FakeSocketServer: @unchecked Sendable {
 
     /// CI regression: under load, reads finished after a fixed 1 s grace and
     /// an exited tool came back with empty stdout. Never a partial answer.
-    @Test func manyConcurrentRunsReturnFullOutput() async {
-        let outputs = await withTaskGroup(of: String?.self) { group in
-            for i in 0..<24 {
-                group.addTask { ProcessRunner().run("/bin/echo", ["run-\(i)"], timeout: 10)?.stdout }
-            }
-            return await group.reduce(into: [String?]()) { $0.append($1) }
+    @Test func manyConcurrentRunsReturnFullOutput() {
+        // GCD threads, not a TaskGroup: `run` blocks, and 24 blocking calls
+        // on Swift's cooperative pool (CPU-count wide) starve every other
+        // test's continuations. On CI that made DictationTimingTests' 500 ms
+        // wall-clock bound fail (BEA-698).
+        let outputs = OSAllocatedUnfairLock(initialState: [String]())
+        DispatchQueue.concurrentPerform(iterations: 24) { i in
+            let out = ProcessRunner().run("/bin/echo", ["run-\(i)"], timeout: 10)?.stdout
+            outputs.withLock { $0.append(out ?? "nil") }
         }
-        #expect(Set(outputs.compactMap { $0 }) == Set((0..<24).map { "run-\($0)\n" }))
+        #expect(Set(outputs.withLock { $0 }) == Set((0..<24).map { "run-\($0)\n" }))
     }
 
     @Test func missingToolIsNil() {
