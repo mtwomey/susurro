@@ -43,7 +43,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         set { UserDefaults.standard.set(newValue, forKey: "smartSpacingEnabled") }
     }
     // Self-tracking, not an Accessibility read — see docs/history/SMART_SPACING_PLAN.md.
-    private var dictationMemory = DictationMemory()
     private let hotkey = HotkeyMonitor()
 
     // Hands-free (BEA-651). The machine decides; the rest is plumbing.
@@ -59,8 +58,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hfAppObserver: NSObjectProtocol?
     /// One FIFO for every insertion, push-to-talk and hands-free (BEA-665, R3).
     private let insertionQueue = InsertionQueue()
-    private let inserter = KeystrokeInserter()
-    private let frontmostApp = SystemFrontmostApp()
+    /// Keystrokes, clipboard/secure-input/app-switch policy and the
+    /// self-tracked DictationMemory (BEA-665, R3).
+    private let executor = InsertExecutor(inserter: KeystrokeInserter(), frontmost: SystemFrontmostApp(),
+                                          clipboard: GeneralPasteboard())
     // Cancel (Esc) moves the gate on: queued chunks are dropped, and a chunk
     // already mid-transcription is dropped at insert time (BEA-663, F2).
     private var hfGate = SessionGate()
@@ -629,7 +630,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         smartSpacingEnabled.toggle()
         sender.state = smartSpacingEnabled ? .on : .off
         if !smartSpacingEnabled {
-            dictationMemory.clear()
+            executor.memory.clear()
         }
         toast.show(smartSpacingEnabled
             ? "Smart Spacing on — dictating again adds a space, unless one's already there"
@@ -843,7 +844,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let pid = app.processIdentifier
                 let snapshot = FocusedFieldReader.readNow(pid: pid, bundleID: app.bundleIdentifier)
                 let (context, provider) = InsertContext.resolve(
-                    snapshot: snapshot, memory: self.dictationMemory.insertionIfStillFocused(pid: pid),
+                    snapshot: snapshot, memory: self.executor.memory.insertionIfStillFocused(pid: pid),
                     pid: pid, bundleID: app.bundleIdentifier, engine: self.engine?.kind,
                     secureInput: IsSecureEventInputEnabled())
                 let stage = TextHandlingStage.standard(smartSpacing: self.smartSpacingEnabled,
@@ -999,15 +1000,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let expectedPID, frontmostPID != expectedPID {
                     // Hands-free chunk finished after an app switch: never type
                     // it somewhere the user didn't dictate into.
-                    let pasteboard = NSPasteboard.general
-                    pasteboard.clearContents()
                     // A held mark travels with the copied words, never lost.
                     // (A mark already shown in the old field stays there.)
                     let copied = InsertPlan.appSwitchClipboardText(processed: processed, join: join)
-                    pasteboard.setString(copied, forType: .string)
+                    let message = self.executor.copyAfterAppSwitch(copied)
                     self.hfJoiner.discard()
-                    self.dictationMemory.clear()
-                    self.toast.show("You switched apps — the last words were copied to the clipboard")
+                    self.toast.show(message)
                     slog("handsfree: chunk after app switch -> clipboard")
                     return
                 }
@@ -1021,7 +1019,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     let sameApp = frontmostPID != nil && frontmostPID == releasePID
                     let resolved = InsertContext.resolve(
                         snapshot: sameApp ? fieldRead : nil,
-                        memory: frontmostPID.flatMap { self.dictationMemory.insertionIfStillFocused(pid: $0) },
+                        memory: frontmostPID.flatMap { self.executor.memory.insertionIfStillFocused(pid: $0) },
                         pid: frontmostPID, bundleID: releaseBundleID, engine: engine.kind,
                         secureInput: secureInputActive)
                     context = resolved.0
@@ -1053,53 +1051,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     TextHandlingLog.record("\(logLine) \(lineTimings.logFields)")
                     return
                 }
-                let insertStart = ContinuousClock.now
-                if deleteCount > 0, let frontmostPID {
-                    self.inserter.deleteBackward(deleteCount)
-                    self.dictationMemory.recordDeletedBackward(deleteCount, inPID: frontmostPID)
-                    slog("handsfree: retracted shown mark")
+                // Where the insertion ends inside a cursorless value, so the
+                // next anchored lookup can tell repeated phrases apart.
+                var position: ValuePosition?
+                if context.source == .anchoredValue, let before = context.before,
+                   let value = fieldRead?.value {
+                    position = ValuePosition.afterInsertion(before: before, value: value, typed: text,
+                                                            deletedBackward: deleteCount)
                 }
-                let typed = self.inserter.type(text)
-                lineTimings.insert = ContinuousClock.now - insertStart
+                // Unknown context (source none): what preceded this insertion
+                // is not known, so the remembered tail starts fresh instead of
+                // gluing onto a tail the user may have deleted (BEA-677).
+                let result = self.executor.insert(
+                    text, deleteBackward: deleteCount, frontmostPID: frontmostPID,
+                    secureInput: secureInputActive, copyToClipboard: self.copyToClipboard,
+                    position: position, continuesTail: context.source != .none)
+                if deleteCount > 0, frontmostPID != nil { slog("handsfree: retracted shown mark") }
+                lineTimings.insert = result.insertDuration
                 TextHandlingLog.record("\(logLine) \(lineTimings.logFields)")
-                if showingMark && typed { self.hfJoiner.markShown() }
-                if !secureInputActive, typed, let frontmostPID {
-                    // Where the insertion ended inside a cursorless value, so the
-                    // next anchored lookup can tell repeated phrases apart.
-                    var position: ValuePosition?
-                    if context.source == .anchoredValue, let before = context.before,
-                       let value = fieldRead?.value {
-                        position = ValuePosition.afterInsertion(before: before, value: value, typed: text,
-                                                                deletedBackward: deleteCount)
-                    }
-                    // Unknown context (source none): what preceded this insertion
-                    // is not known, so the remembered tail starts fresh instead of
-                    // gluing onto a tail the user may have deleted (BEA-677).
-                    self.dictationMemory.recordTyped(text, intoPID: frontmostPID, position: position,
-                                                     continuesTail: context.source != .none)
-                    if !isHandsFree, let bounds = CrossDictationJoin.speechBounds(samples) {
-                        let record = CrossDictationJoin.Previous(typed: text, pid: frontmostPID, fieldID: nil,
-                                                                 endedAt: Date(), position: position)
-                        self.xPrev = (record, samples, bounds.last)
-                    } else {
-                        self.xPrev = nil
-                    }
+                if showingMark && result.typed { self.hfJoiner.markShown() }
+                if result.recorded, !isHandsFree, let frontmostPID,
+                   let bounds = CrossDictationJoin.speechBounds(samples) {
+                    let record = CrossDictationJoin.Previous(typed: text, pid: frontmostPID, fieldID: nil,
+                                                             endedAt: Date(), position: position)
+                    self.xPrev = (record, samples, bounds.last)
                 } else {
                     self.xPrev = nil
-                    // Nothing was actually typed (secure input blocked it, a
-                    // keystroke event failed to post, or we couldn't identify
-                    // the frontmost app) — don't let a stale tail leak into
-                    // whatever's focused next.
-                    self.dictationMemory.clear()
                 }
-                if self.copyToClipboard || secureInputActive {
-                    let pasteboard = NSPasteboard.general
-                    pasteboard.clearContents()
-                    pasteboard.setString(text, forType: .string)
-                    if secureInputActive && !self.copyToClipboard {
-                        self.toast.show("Typing blocked by a secure field — transcript copied to clipboard")
-                    }
-                }
+                if let toast = result.toast { self.toast.show(toast) }
             }
         }
     }
@@ -1227,11 +1206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 [weak self] in
                 guard let self else { return }
                 self.hfPrevChunk = nil
-                if let typed = HeldMarkTail.type(mark: self.hfJoiner.stop(), sessionPID: pid,
-                                                 frontmost: self.frontmostApp, inserter: self.inserter),
-                   let pid {
-                    self.dictationMemory.recordTyped(typed, intoPID: pid)
-                }
+                self.executor.typeHeldMark(self.hfJoiner.stop(), sessionPID: pid)
             }
         } else {
             hfGate.cancel() // drop chunks not yet typed, incl. one mid-transcription
@@ -1298,6 +1273,16 @@ typealias HFChunk = DictationPipeline.ChunkAudio
 final class KeystrokeInserter: Inserter {
     func type(_ text: String) -> Bool { TextInjector.type(text) }
     func deleteBackward(_ count: Int) { TextInjector.deleteBackward(count) }
+}
+
+/// The real Clipboard: NSPasteboard.general.
+@MainActor
+final class GeneralPasteboard: Clipboard {
+    func set(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
 }
 
 /// The real FrontmostAppProvider: NSWorkspace + Carbon secure-input state.

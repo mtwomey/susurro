@@ -18,6 +18,90 @@ final class FakeFrontmost: FrontmostAppProvider {
 }
 
 @MainActor
+final class FakeClipboard: Clipboard {
+    var contents: [String] = []
+    func set(_ text: String) { contents.append(text) }
+}
+
+@MainActor
+@Suite struct InsertExecutorTests {
+    let inserter = FakeInserter(), front = FakeFrontmost(7), clipboard = FakeClipboard()
+    var executor: InsertExecutor { InsertExecutor(inserter: inserter, frontmost: front, clipboard: clipboard) }
+
+    @Test func typesAndRemembers() {
+        let ex = executor
+        let r = ex.insert("Hello there.", deleteBackward: 0, frontmostPID: 7, secureInput: false,
+                          copyToClipboard: false, position: nil, continuesTail: true)
+        #expect(r.typed && r.recorded && r.toast == nil)
+        #expect(inserter.log == ["type:Hello there."])
+        #expect(clipboard.contents.isEmpty)
+        #expect(ex.memory.tailIfStillFocused(pid: 7) != nil)
+    }
+
+    /// Shown hands-free mark: Delete first, then the joined text; memory
+    /// sees the retraction.
+    @Test func shownMarkRetractDeletesBeforeTyping() {
+        let ex = executor
+        _ = ex.insert("one.", deleteBackward: 0, frontmostPID: 7, secureInput: false,
+                      copyToClipboard: false, position: nil, continuesTail: true)
+        _ = ex.insert(" two", deleteBackward: 1, frontmostPID: 7, secureInput: false,
+                      copyToClipboard: false, position: nil, continuesTail: true)
+        #expect(inserter.log == ["type:one.", "delete:1", "type: two"])
+        #expect(ex.memory.tailIfStillFocused(pid: 7)?.hasSuffix("one two") == true)
+    }
+
+    @Test func secureInputCopiesClearsMemoryAndToasts() {
+        let ex = executor
+        _ = ex.insert("before", deleteBackward: 0, frontmostPID: 7, secureInput: false,
+                      copyToClipboard: false, position: nil, continuesTail: true)
+        let r = ex.insert("secret", deleteBackward: 0, frontmostPID: 7, secureInput: true,
+                          copyToClipboard: false, position: nil, continuesTail: true)
+        #expect(!r.recorded)
+        #expect(r.toast == InsertExecutor.secureInputToast)
+        #expect(clipboard.contents == ["secret"])
+        #expect(ex.memory.tailIfStillFocused(pid: 7) == nil)
+    }
+
+    @Test func copySettingCopiesWithoutToast() {
+        let r = executor.insert("hi", deleteBackward: 0, frontmostPID: 7, secureInput: false,
+                                copyToClipboard: true, position: nil, continuesTail: true)
+        #expect(r.recorded && r.toast == nil && clipboard.contents == ["hi"])
+    }
+
+    @Test func failedKeystrokeForgetsTail() {
+        let ex = executor
+        _ = ex.insert("before", deleteBackward: 0, frontmostPID: 7, secureInput: false,
+                      copyToClipboard: false, position: nil, continuesTail: true)
+        inserter.failTyping = true
+        let r = ex.insert("lost", deleteBackward: 0, frontmostPID: 7, secureInput: false,
+                          copyToClipboard: false, position: nil, continuesTail: true)
+        #expect(!r.typed && !r.recorded)
+        #expect(ex.memory.tailIfStillFocused(pid: 7) == nil)
+    }
+
+    @Test func appSwitchGoesToClipboardNotKeystrokes() {
+        let ex = executor
+        _ = ex.insert("before", deleteBackward: 0, frontmostPID: 7, secureInput: false,
+                      copyToClipboard: false, position: nil, continuesTail: true)
+        inserter.log = []
+        #expect(ex.copyAfterAppSwitch("late words.") == InsertExecutor.appSwitchToast)
+        #expect(inserter.log.isEmpty)
+        #expect(clipboard.contents == ["late words."])
+        #expect(ex.memory.tailIfStillFocused(pid: 7) == nil)
+    }
+
+    @Test func heldMarkTailRemembered() {
+        let ex = executor
+        ex.typeHeldMark(".", sessionPID: 7)
+        #expect(inserter.log == ["type:."])
+        #expect(ex.memory.tailIfStillFocused(pid: 7) == ".")
+        front.frontmostPID = 9
+        ex.typeHeldMark("?", sessionPID: 7)
+        #expect(inserter.log == ["type:."])
+    }
+}
+
+@MainActor
 @Suite struct InsertionQueueTests {
     /// F3: a slow first dictation must still type before a fast second one.
     @Test func testFIFOOrderingDespiteVariableLatency() async {

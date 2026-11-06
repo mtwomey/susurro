@@ -23,6 +23,95 @@ public protocol FrontmostAppProvider: AnyObject {
     var secureInputActive: Bool { get }
 }
 
+/// The general pasteboard; a fake in tests.
+@MainActor
+public protocol Clipboard: AnyObject {
+    /// Replace the clipboard contents with `text`.
+    func set(_ text: String)
+}
+
+/// Carries out an insert decided by InsertPlan: the keystrokes, the
+/// clipboard / secure-input / app-switch policy and the DictationMemory
+/// bookkeeping (BEA-665, R3). Owns the memory, so every writer goes through
+/// the one queue that calls it.
+@MainActor
+public final class InsertExecutor {
+    public let inserter: Inserter
+    public let frontmost: FrontmostAppProvider
+    public let clipboard: Clipboard
+    /// What Susurro itself typed last, per app (fallback insert context).
+    public var memory = DictationMemory()
+
+    public init(inserter: Inserter, frontmost: FrontmostAppProvider, clipboard: Clipboard) {
+        self.inserter = inserter
+        self.frontmost = frontmost
+        self.clipboard = clipboard
+    }
+
+    public static let appSwitchToast = "You switched apps — the last words were copied to the clipboard"
+    public static let secureInputToast = "Typing blocked by a secure field — transcript copied to clipboard"
+
+    /// A hands-free chunk finished after the user switched apps: never type it
+    /// where they didn't dictate. Copies `text` and forgets the remembered
+    /// tail. Returns the toast to show.
+    public func copyAfterAppSwitch(_ text: String) -> String {
+        clipboard.set(text)
+        memory.clear()
+        return Self.appSwitchToast
+    }
+
+    public struct Result: Equatable, Sendable {
+        /// Every keystroke posted.
+        public var typed: Bool
+        /// The insertion was remembered (typed, not secure, app known).
+        public var recorded: Bool
+        /// Time spent on the keystrokes (delete + type).
+        public var insertDuration: Duration
+        public var toast: String?
+    }
+
+    /// Retract `deleteBackward` characters (a shown hands-free mark), type
+    /// `text`, then update memory and the clipboard:
+    /// - typed, not secure, app known: remember it (`position`, `continuesTail`
+    ///   as DictationMemory.recordTyped);
+    /// - otherwise (secure input, a failed keystroke, no frontmost app): clear
+    ///   the memory so a stale tail can't leak into the next field;
+    /// - copy to the clipboard when `copyToClipboard` is on or secure input
+    ///   blocked typing (toast only in the latter case).
+    public func insert(_ text: String, deleteBackward deleteCount: Int, frontmostPID: pid_t?,
+                       secureInput: Bool, copyToClipboard: Bool,
+                       position: ValuePosition?, continuesTail: Bool) -> Result {
+        let start = ContinuousClock.now
+        if deleteCount > 0, let frontmostPID {
+            inserter.deleteBackward(deleteCount)
+            memory.recordDeletedBackward(deleteCount, inPID: frontmostPID)
+        }
+        let typed = inserter.type(text)
+        var result = Result(typed: typed, recorded: false, insertDuration: ContinuousClock.now - start)
+        if !secureInput, typed, let frontmostPID {
+            memory.recordTyped(text, intoPID: frontmostPID, position: position, continuesTail: continuesTail)
+            result.recorded = true
+        } else {
+            memory.clear()
+        }
+        if copyToClipboard || secureInput {
+            clipboard.set(text)
+            if secureInput && !copyToClipboard { result.toast = Self.secureInputToast }
+        }
+        return result
+    }
+
+    /// End of a hands-free session: type the held mark (HeldMarkTail rules)
+    /// and remember it.
+    public func typeHeldMark(_ mark: Character?, sessionPID: pid_t?) {
+        if let typed = HeldMarkTail.type(mark: mark, sessionPID: sessionPID,
+                                         frontmost: frontmost, inserter: inserter),
+           let sessionPID {
+            memory.recordTyped(typed, intoPID: sessionPID)
+        }
+    }
+}
+
 /// A serial, cancel-aware FIFO of insertion jobs on the main actor.
 ///
 /// Each job runs only after the previous one has finished (transcription,
