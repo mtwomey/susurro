@@ -182,7 +182,7 @@ Tools: `spike/latch-probe/probe2.swift` (no focus hop), `axw.swift`/`focus.swift
 | Terminal | postToPid works (BEA-678); AX is read-only | **PARTIAL**: value = the whole scrollback (95 chars), caret range readable (72,0); the command line is not separable from output | – | – | **Not supported** (context is the scrollback, so joins can't be computed). A Terminal bridge (AppleScript) could change this. |
 | Warp | AX write: no (read-only). **postToPid landed** (`[pid]` read back) | **FAIL**: no selection range (`range=nil`, numChars 0) | PASS (element valid) | – | **Not supported** (criterion 2) |
 | VS Code (untitled file, window activated onto the stage, so the BEA-678 "inconclusive" is settled) | **FAIL**: AX write err 0, nothing landed. postToPid not attempted: once VS Code is in the background its focused element is no longer the remembered one | **FAIL**: Monaco's hidden textarea reports value length 0 while the editor holds `alpha beta ` | FAIL (focus changes) | – | **Not supported** |
-| Obsidian | AX write: no. **Raw postToPid lands** (`alpha beta [pid]` in the saved file; the earlier read-back miss doesn't reproduce: read-back of the remembered element now shows it) | PASS: value + range | **FAIL**: in the background the app reports *no* focused element (`kAXErrorNoValue`, -25212), so the "focused == remembered" check before each chunk can't run. Text goes to whatever CodeMirror has focus. | – | **Not supported** under the strict invariant |
+| Obsidian (AX/postToPid; **see the CLI bridge below, which passes all four**) | AX write: no. **Raw postToPid lands** (`alpha beta [pid]` in the saved file; the earlier read-back miss doesn't reproduce: read-back of the remembered element now shows it) | PASS: value + range | **FAIL**: in the background the app reports *no* focused element (`kAXErrorNoValue`, -25212), so the "focused == remembered" check before each chunk can't run. Text goes to whatever CodeMirror has focus. | – | **Not supported** under the strict invariant |
 | Zen + React test page | **pid-posted text reached React**: window title (bound to React state) became `R:[pid]`, so the controlled input saw real input events. AX write: inconclusive. After keyboard (Tab) focus, Firefox reported the focused element as `AXWebArea`, not the textarea, so the AX write had no target | FAIL in this run (focused element = web area) | – | React sees pid-posted text (**PASS** for the postToPid path). contenteditable not checked. | **Inconclusive**: BEA-678 saw an `AXTextArea` after a mouse click; Firefox AX focus depends on how the field was focused |
 | Slack | not probed | – | – | – | Stopped: after the quick switcher, focus fell back to a composer holding a real 24-character draft. Not touched. Electron, so expected to behave like VS Code/Obsidian. |
 | Hermes desktop | not probed (time; no safe "new chat" shortcut verified) | – | – | – | Electron: expected not supported |
@@ -205,10 +205,33 @@ Tools: `spike/latch-probe/probe2.swift` (no focus hop), `axw.swift`/`focus.swift
 
 **Not done.** It needs a person holding rightOption and tapping Cmd. `chordtap` (listen-only) is built and ready (`~/.hermes/cache/scratch/bea689/chordtap 20`).
 
+### Obsidian deep-dive: a bridge through the official CLI (board follow-up, BEA-689)
+
+Matthew asked for a way to make Obsidian work without bringing it forward. Found one: **Obsidian ships an official CLI** (`/Applications/Obsidian.app/Contents/MacOS/obsidian-cli`, linked as `/usr/local/bin/obsidian`). It's enabled here (`"cli": true` in `~/Library/Application Support/obsidian/obsidian.json`). Its `eval code=<js>` command runs JavaScript inside the running app and returns the result; async functions are awaited. That gives the editor API (`app.workspace`, `leaf.view.editor`, CM6 underneath) with no AX and no keystrokes. Tested on a scratch note opened in a **background, non-active tab** while Zen/Warp was frontmost. Obsidian never came forward.
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| 1. Background delivery + read-back | **PASS** | `editor.replaceRange('[cli1]', pos)` then `' [cli2]'` at the tracked offset: `getValue()` = `alpha beta [cli1] [cli2]`, and the file on disk matched about 2 s later. 5.7 ms for both inserts plus reads inside the app; one CLI round trip is about 45 ms. |
+| 2. Context readable | **PASS** | `getRange(lineStart, cursor)` = `alpha beta `, plus `getCursor()` / `getSelection()` / the whole `getValue()`. That's richer than AX. |
+| 3. Identity holds | **PASS** | The target is pinned by **leaf id + TFile**, not by focus. The user's active leaf (`ba85f7…`) and the caret in the scratch note (ch 11) were unchanged after the inserts. A closed target is detected (`getLeafById` → null, so the latch ends). |
+| 4. App state / undo | **PASS** | Inserts are ordinary CM6 transactions, so the file saves normally. `undo()` removed the dictated text and `redo()` brought it back. Note: CM6 merges transactions less than 500 ms apart into one undo step, so two quick chunks undo together. Per-chunk undo would need `isolateHistory`; that's a design choice, not a blocker. |
+
+The scratch note was deleted through the vault API, and no leftover file or trash entry was found. The user's workspace was left as it was (1 markdown leaf, same active leaf).
+
+**Delivery design for Obsidian (bridge, like Emacs):**
+- **At latch time** (Obsidian frontmost): `eval` returns `{leafId, path, cursorOffset}` for the active markdown leaf. If it isn't a markdown editor (canvas, PDF, settings), show the "not supported" pill.
+- **Per chunk:** one `eval` that checks the leaf and file still exist, reads the context before the tracked offset (for joins), calls `replaceRange` at the tracked offset, advances the offset, and returns the new text around it for read-back. The offset must be **mapped through concurrent user edits**, because the user can type in the same note in another pane. Use CM6 `ChangeSet.mapPos` via `editor.cm`, or keep a CM6 position marker.
+- **Requires** the Obsidian CLI toggle (Settings → General → Command line interface). If it's off, show the pill "Latching in Obsidian needs the Obsidian CLI enabled", with a link. No Obsidian plugin needed.
+- **Risk:** `eval` is arbitrary JS in the user's vault app. Susurro would only send fixed, parameterised snippets (text JSON-escaped). The CLI is a newer Obsidian feature; check the version in the capability list.
+
+**Rejected alternatives (and why):** AX `kAXValue` set (replaces the whole document); CDP via `obsidian dev:cdp` (`Input.insertText` goes to the focused element, which is the same focus problem); Advanced URI / `obsidian://` (opens the app in front); writing the `.md` file directly (no caret or undo, and it races the open editor buffer); the Local REST API plugin (not installed, and it has no caret API); postToPid plus an AXObserver focus-change guard (keystrokes still follow CodeMirror's internal focus, and Electron stops reporting focus in the background).
+
+**General lesson:** for apps that fail AX/postToPid, look for an **in-app scripting bridge**. Emacs (server) and Obsidian (CLI eval) both pass every strict criterion that way. Candidates worth a look: VS Code (a tiny extension with a local socket, using `TextEditor.edit` on a pinned document) and Terminal/iTerm (AppleScript). Slack, Warp and Hermes desktop have no such bridge that I know of.
+
 ### Launch support list (strict)
 
-- **Full:** TextEdit (pending the in-app undo check), Emacs (bridge). Notes probably, but unprobed.
-- **Not supported:** VS Code, Obsidian, Warp, Terminal (context), Slack and Hermes (unprobed; Electron pattern), Zen (inconclusive).
+- **Full:** TextEdit (pending the in-app undo check), Emacs (bridge), **Obsidian (CLI bridge, needs the CLI toggle)**. Notes probably, but unprobed.
+- **Not supported:** VS Code (bridge possible via an extension), Warp, Terminal (context; AppleScript bridge possible), Slack and Hermes (unprobed; Electron pattern), Zen (inconclusive).
 
 ### Go / no-go
 
@@ -216,7 +239,7 @@ Tools: `spike/latch-probe/probe2.swift` (no focus hop), `axw.swift`/`focus.swift
 
 **Do ship passive AX learning on its own**, as an insertion-path improvement for frontmost dictation (always on, read-back guarded). It removes typing latency where AX works, it is the qualification source if latch is revisited, and it is about 1 day.
 
-If the board still wants latch (narrow GO): revised effort **about 4 days**. Machine rename + three-state cycle 0.5; LatchTarget/validation/AX + read-back delivery and Emacs bridge 1.5; capability list (bundled + remote) and pill 0.5; element-targeted FocusedFieldReader and joins 1; overlay 0.5. Drop postToPid latch for v1 (no app passes identity with it). Guided self-test only once a postToPid-validating approach exists.
+If the board still wants latch (narrow GO): revised effort **about 4 days**. Machine rename + three-state cycle 0.5; LatchTarget/validation/AX + read-back delivery and Emacs bridge 1.5; capability list (bundled + remote) and pill 0.5; element-targeted FocusedFieldReader and joins 1; overlay 0.5. Drop postToPid latch for v1 (no app passes identity with it). **Update after the Obsidian deep-dive:** an Obsidian CLI bridge (pin, per-chunk eval, offset mapping, CLI-off pill) adds about 1 day. That makes a narrow GO **about 5 days** for AppKit + Emacs + Obsidian. A VS Code extension bridge would be a further spike (about 0.5 day) and about 1–1.5 days to build. Bridges are what make the list useful for Matthew's apps. The no-go above assumed AX/postToPid only. Guided self-test only once a postToPid-validating approach exists.
 
 ## Board decisions (2026-11-06, BEA-678 interview)
 
