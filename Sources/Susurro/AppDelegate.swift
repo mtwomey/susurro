@@ -76,18 +76,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// and its audio, kept so the next dictation can decide its full stop.
     private var xPrev: (record: CrossDictationJoin.Previous, samples: [Float], lastSpeech: Int)?
     private var now: Double { ProcessInfo.processInfo.systemUptime }
-    private var engine: (any TranscriptionEngine)?
-    // Bumped on every loadEngine() call; a load that finishes after a newer
-    // one started (fast menu switching) is discarded instead of winning.
-    private var engineGeneration = 0
-    /// Why there's no engine right now, for user-visible feedback. The menu
-    /// status item alone is invisible unless the menu is open, and a cold
-    /// Parakeet load (Core ML compile) takes ~20 s, so without this the app
-    /// looked broken: push-to-talk silently did nothing.
-    private enum EngineState { case loading, downloading, failed, ready }
-    private var engineState: EngineState = .loading {
-        didSet { updateStatusIcon() }
-    }
+    private lazy var engines: EngineController = {
+        let c = EngineController(models: models, toast: toast, tuning: tuning)
+        c.onStateChange = { [unowned self] in self.updateStatusIcon() }
+        c.setStatus = { [unowned self] in self.setStatus($0) }
+        c.clearStatus = { [unowned self] in self.clearStatus() }
+        c.rebuildModelMenu = { [unowned self] in self.rebuildModelMenu() }
+        c.hotkeyTitle = { [unowned self] in self.hotkey.key.title }
+        return c
+    }()
+    private var engine: (any TranscriptionEngine)? { engines.engine }
     private var axPollTimer: Timer?
 
     // Set once if the mic-permission callback reports denial. Sticky for the
@@ -268,7 +266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        loadEngine()
+        engines.load()
     }
 
     // MARK: - Models
@@ -288,7 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         modelMenu.removeAllItems()
         // One menu, sectioned by engine (Parakeet is Apple Silicon only;
         // menuSections() omits it elsewhere). Picking any entry hot-swaps the
-        // engine via loadEngine(). Keep HelpWindow's "Model" text in sync.
+        // engine via engines.load(). Keep HelpWindow's "Model" text in sync.
         for (index, section) in ModelManager.menuSections().enumerated() {
             if index > 0 { modelMenu.addItem(.separator()) }
             modelMenu.addItem(.sectionHeader(title: section.engine.menuSectionTitle))
@@ -326,7 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard models.activeModelID != model.id else { return }
             models.activeModelID = model.id
             rebuildModelMenu()
-            loadEngine() // hot-swap
+            engines.load() // hot-swap
         } else {
             guard !models.isDownloading(model) else {
                 toast.show("\(model.id) is already downloading")
@@ -341,70 +339,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             } else {
                 toast.show("⬇ Downloading \(model.id) — no model active yet; dictation starts when it's ready")
             }
-            Task { [weak self] in
-                do {
-                    try await self?.models.download(model)
-                    guard let self else { return }
-                    self.models.activeModelID = model.id
-                    self.rebuildModelMenu()
-                    self.loadEngine()
-                    self.notify("Model ready",
-                                "\(model.id) downloaded — Susurro is now using it.")
-                } catch {
-                    slog("model download failed: \(error)")
-                    self?.notify("Model download failed",
-                                 "\(model.id): \(error.localizedDescription)")
-                    self?.rebuildModelMenu()
-                }
-            }
+            engines.downloadAndSwitch(to: model)
             rebuildModelMenu()
         }
     }
 
-    private func notify(_ title: String, _ body: String) {
-        let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert]) { granted, _ in
-            guard granted else { return }
-            let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = body
-            center.add(UNNotificationRequest(
-                identifier: UUID().uuidString, content: content, trigger: nil
-            ))
-        }
-    }
-
-    /// Fresh install: no model anywhere — fetch the default automatically rather
-    /// than leaving the app silently inert.
-    private func autoDownloadDefaultModel() {
-        guard let small = ModelManager.catalog.first(where: { $0.id == "small.en" }),
-              !models.isDownloading(small) else { return }
-        toast.show("⬇ First run: downloading the small.en model (466 MB) — dictation will be ready shortly")
-        Task { [weak self] in
-            do {
-                try await self?.models.download(small)
-                guard let self else { return }
-                // Don't stomp a model the user explicitly chose in the meantime
-                if self.models.activeModelPath() == nil || self.engine == nil {
-                    self.models.activeModelID = small.id
-                    self.loadEngine()
-                    self.notify("Susurro is ready",
-                                "small.en downloaded — hold your push-to-talk key to dictate.")
-                }
-                self.rebuildModelMenu()
-            } catch {
-                slog("auto-download failed: \(error)")
-                self?.engineState = .failed
-                self?.setStatus("Model download failed — retry from the Model menu")
-                self?.notify("Model download failed",
-                             "Open the Model menu to retry. \(error.localizedDescription)")
-                self?.rebuildModelMenu()
-            }
-        }
-    }
-
     /// Shows (or updates) the status menu item — inserted back into the menu
-    /// if it isn't there, since `loadEngine()` can run again later (model
+    /// if it isn't there, since `engines.load()` can run again later (model
     /// hot-swap, retry after failure) after `clearStatus()` removed it.
     ///
     /// `recordItem` is shared between two unrelated concerns: transient
@@ -448,7 +389,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// identical to a ready one.
     private func updateStatusIcon() {
         guard let button = statusItem?.button else { return }
-        let (symbol, tip): (String, String) = switch engineState {
+        let (symbol, tip): (String, String) = switch engines.state {
         case .ready: ("waveform.circle", "Susurro")
         case .loading: ("hourglass.circle", "Susurro — loading model…")
         case .downloading: ("arrow.down.circle", "Susurro — downloading model…")
@@ -462,61 +403,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !micAccessDenied else { return }
         if let menu = statusItem.menu, menu.items.contains(recordItem) {
             menu.removeItem(recordItem)
-        }
-    }
-
-    private func loadEngine() {
-        engineGeneration += 1
-        let generation = engineGeneration
-        guard let path = models.activeModelPath() else {
-            setStatus("Downloading model…")
-            engineState = .downloading
-            autoDownloadDefaultModel()
-            return
-        }
-        let kind = models.activeModel?.engine
-        // Drop the old engine first so whisper and Parakeet are never both
-        // resident; push-to-talk is ignored while engine is nil.
-        engine = nil
-        setStatus("Loading model…")
-        engineState = .loading
-        slog("loading model (\(kind?.rawValue ?? "?")): \(path)")
-        let modelName = models.activeModelID
-        let loadStart = Date()
-        // Only announce slow loads, so the usual sub-second load stays silent.
-        DispatchQueue.main.asyncAfter(deadline: .now() + Tuning.default.slowLoadThreshold) { [weak self] in
-            guard let self, generation == self.engineGeneration, self.engine == nil,
-                  self.engineState == .loading else { return }
-            self.toast.show(
-                "Loading \(modelName)… the first load after install can take ~20 s",
-                seconds: 6
-            )
-        }
-        Task.detached(priority: .userInitiated) {
-            do {
-                let start = Date()
-                let engine = try TranscriptionEngines.load(modelPath: path, engine: kind)
-                slog(String(format: "model loaded in %.1fs", -start.timeIntervalSinceNow))
-                await MainActor.run { [weak self] in
-                    guard let self, generation == self.engineGeneration else {
-                        slog("model load superseded, discarding")
-                        return
-                    }
-                    self.engine = engine
-                    self.engineState = .ready
-                    self.clearStatus()
-                    if -loadStart.timeIntervalSinceNow >= Tuning.default.slowLoadThreshold {
-                        self.toast.show("✓ \(modelName) ready — hold \(self.hotkey.key.title) to dictate")
-                    }
-                }
-            } catch {
-                slog("model load FAILED: \(error)")
-                await MainActor.run { [weak self] in
-                    guard let self, generation == self.engineGeneration else { return }
-                    self.engineState = .failed
-                    self.setStatus("Model load failed")
-                }
-            }
         }
     }
 
@@ -724,16 +610,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !recorder.isRecording else { return }
         guard engine != nil else {
             // Never ignore the key silently: say why nothing is happening.
-            switch engineState {
-            case .loading:
-                toast.show("Model still loading — dictation will be ready in a few seconds")
-            case .downloading:
-                toast.show("Model still downloading — dictation starts when it's ready")
-            case .failed:
-                toast.show("Model failed to load — pick a model from the Susurro menu")
-            case .ready:
-                break
-            }
+            if let why = engines.unavailableMessage { toast.show(why) }
             return
         }
         do {
