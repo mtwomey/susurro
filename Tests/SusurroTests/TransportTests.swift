@@ -82,6 +82,18 @@ private final class FakeSocketServer: @unchecked Sendable {
         #expect(Date().timeIntervalSince(start) < 2)
     }
 
+    /// CI regression: under load, reads finished after a fixed 1 s grace and
+    /// an exited tool came back with empty stdout. Never a partial answer.
+    @Test func manyConcurrentRunsReturnFullOutput() async {
+        let outputs = await withTaskGroup(of: String?.self) { group in
+            for i in 0..<24 {
+                group.addTask { ProcessRunner().run("/bin/echo", ["run-\(i)"], timeout: 10)?.stdout }
+            }
+            return await group.reduce(into: [String?]()) { $0.append($1) }
+        }
+        #expect(Set(outputs.compactMap { $0 }) == Set((0..<24).map { "run-\($0)\n" }))
+    }
+
     @Test func missingToolIsNil() {
         #expect(ProcessRunner().run("/no/such/tool", [], timeout: 1) == nil)
     }

@@ -26,19 +26,22 @@ public struct ProcessRunner: Sendable {
         let done = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in done.signal() }
         do { try process.run() } catch { return nil }
-        // Drain both pipes concurrently so a chatty tool can't fill a pipe
-        // buffer and deadlock against the wait below.
-        let group = DispatchGroup()
+        // Drain both pipes on dedicated threads (not the shared GCD pool,
+        // which a busy process can starve), so a chatty tool can't fill a
+        // pipe buffer and deadlock against the wait below.
+        let deadline = DispatchTime.now() + timeout
+        let reads = DispatchGroup()
         nonisolated(unsafe) var outData = Data(), errData = Data()
-        DispatchQueue.global().async(group: group) { outData = out.fileHandleForReading.readDataToEndOfFile() }
-        DispatchQueue.global().async(group: group) { errData = err.fileHandleForReading.readDataToEndOfFile() }
-        if done.wait(timeout: .now() + timeout) == .timedOut {
+        reads.enter(); reads.enter()
+        Thread.detachNewThread { outData = out.fileHandleForReading.readDataToEndOfFile(); reads.leave() }
+        Thread.detachNewThread { errData = err.fileHandleForReading.readDataToEndOfFile(); reads.leave() }
+        if done.wait(timeout: deadline) == .timedOut {
             process.terminate()
             _ = done.wait(timeout: .now() + 1)
-            _ = group.wait(timeout: .now() + 1)
             return nil
         }
-        _ = group.wait(timeout: .now() + 1)
+        // EOF follows the exit; never report a partial read as an answer.
+        guard reads.wait(timeout: deadline + 1) == .success else { return nil }
         return Output(status: process.terminationStatus,
                       stdout: String(data: outData, encoding: .utf8) ?? "",
                       stderr: String(data: errData, encoding: .utf8) ?? "")
