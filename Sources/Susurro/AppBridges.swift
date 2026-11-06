@@ -58,11 +58,43 @@ struct EmacsServerBridge: AppBridge {
     }
 
     func textBeforeCursor() -> String? {
+        rawEval(expression).flatMap(EmacsServerProtocol.parse(reply:))
+    }
+
+    // MARK: Latch (BEA-691)
+
+    /// Pin the selected window's buffer at point with a marker. nil when the
+    /// server is down or the minibuffer is selected.
+    func latchPin(id: Int, appName: String) -> LatchPin? {
+        guard case .value(let bufferName) = EmacsLatchLisp.decode(reply: rawEval(EmacsLatchLisp.pin(id: id), timeout: 0.5))
+        else { return nil }
+        return LatchPin(method: .emacsServer, bundleID: "org.gnu.Emacs", appName: appName,
+                        documentName: bufferName, handle: String(id))
+    }
+
+    func latchContext(_ pin: LatchPin) -> EmacsLatchLisp.Reply {
+        guard let id = Int(pin.handle) else { return .none }
+        return EmacsLatchLisp.decode(reply: rawEval(EmacsLatchLisp.context(id: id), timeout: 0.5))
+    }
+
+    func latchInsert(_ text: String, at pin: LatchPin) -> EmacsLatchLisp.Reply {
+        guard let id = Int(pin.handle) else { return .none }
+        return EmacsLatchLisp.decode(reply: rawEval(EmacsLatchLisp.insert(id: id, text: text), timeout: 1.0))
+    }
+
+    func latchRelease(_ pin: LatchPin) {
+        guard let id = Int(pin.handle) else { return }
+        _ = rawEval(EmacsLatchLisp.release(id: id), timeout: 0.5)
+    }
+
+    /// One `-eval` request on the server socket; the raw reply text.
+    private func rawEval(_ lisp: String, timeout: TimeInterval? = nil) -> String? {
+        let timeout = timeout ?? self.timeout
         guard let path = socketPath() else { return nil }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
         defer { close(fd) }
-        var tv = timeval(tv_sec: 0, tv_usec: Int32(timeout * 1_000_000))
+        var tv = timeval(tv_sec: Int(timeout), tv_usec: Int32((timeout - Double(Int(timeout))) * 1_000_000))
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         var addr = sockaddr_un()
@@ -79,7 +111,7 @@ struct EmacsServerBridge: AppBridge {
             }
         }
         guard connected == 0 else { return nil }
-        let request = Array(("-eval " + EmacsServerProtocol.quote(expression) + "\n").utf8)
+        let request = Array(("-eval " + EmacsServerProtocol.quote(lisp) + "\n").utf8)
         guard request.withUnsafeBytes({ send(fd, $0.baseAddress, $0.count, 0) }) == request.count else { return nil }
         var reply = Data()
         var chunk = [UInt8](repeating: 0, count: 4096)
@@ -88,10 +120,11 @@ struct EmacsServerBridge: AppBridge {
             let n = recv(fd, &chunk, chunk.count, 0)
             if n <= 0 { break }
             reply.append(contentsOf: chunk[0..<n])
-            if let text = String(data: reply, encoding: .utf8), let answer = EmacsServerProtocol.parse(reply: text) {
-                return answer
+            if let text = String(data: reply, encoding: .utf8),
+               EmacsServerProtocol.printedString(reply: text) != nil || text.contains("-error ") {
+                return text
             }
         }
-        return String(data: reply, encoding: .utf8).flatMap(EmacsServerProtocol.parse(reply:))
+        return String(data: reply, encoding: .utf8)
     }
 }
