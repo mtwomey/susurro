@@ -449,7 +449,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private func rebuildLatchMenu() {
         guard let latchMenu = latchItem?.submenu else { return }
         latchMenu.removeAllItems()
-        for id in LatchKeyResolver.choices(ptt: hotkey.key.id) {
+        for id in ModeKeyResolver.choices(ptt: hotkey.key.id) {
             guard let choice = PTTKey.all.first(where: { $0.id == id }) else { continue }
             let item = NSMenuItem(title: choice.title, action: #selector(latchKeyAction(_:)), keyEquivalent: "")
             item.target = self

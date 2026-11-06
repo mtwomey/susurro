@@ -133,7 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setUpHotkey() {
         hotkey.onPress = { [weak self] in guard let self else { return }; _ = self.hfEvent(.pttDown(at: self.now)) }
         hotkey.onRelease = { [weak self] in guard let self else { return }; _ = self.hfEvent(.pttUp(at: self.now)) }
-        hotkey.onLatch = { [weak self] in guard let self else { return }; _ = self.hfEvent(.latchDown(at: self.now)) }
+        hotkey.onModeTap = { [weak self] in guard let self else { return }; _ = self.hfEvent(.modeTap(at: self.now)) }
         hotkey.onEscape = { [weak self] in guard let self else { return false }; return self.hfEvent(.escape(at: self.now)) }
 
         if HotkeyMonitor.ensureAccessibility(prompt: true), hotkey.start() {
@@ -205,8 +205,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .startRecording:
             pttPressed()
             if !recorder.isRecording { handsFree.reset() } // model not ready, mic failed
-        case .latched:
+        case .handsFree:
             hfBegin()
+        case .requestLatch:
+            hfRequestLatch()
+        case .pushToTalk:
+            hfDropLatch()
         case .stopAndInsert(let reason):
             if hfTimer != nil { hfEnd(insert: true, reason: reason) } else { pttReleased() }
         case .cancel:
@@ -243,6 +247,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 _ = self.hfEvent(.appSwitched(at: self.now))
             }
         }
+    }
+
+    /// Latch v1 (BEA-691): engage only on allowlisted targets. Until a bridge
+    /// pins the target, refuse with a pill and carry on in hands-free.
+    private func hfRequestLatch() {
+        let name = NSWorkspace.shared.frontmostApplication?.localizedName ?? "this app"
+        toast.show("Latching isn't supported in \(name)")
+        Log.handsfree.event("latch refused")
+        _ = hfEvent(.latchRefused)
+    }
+
+    /// Back to push-to-talk while held: release any latch pin.
+    private func hfDropLatch() {
+        Log.handsfree.event("push-to-talk")
     }
 
     /// Drain new audio, cut at pauses, queue finished chunks, drive auto-stop.

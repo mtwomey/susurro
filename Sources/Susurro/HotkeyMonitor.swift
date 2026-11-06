@@ -35,7 +35,7 @@ struct PTTKey: Sendable, Equatable {
     /// The hands-free latch key for a push-to-talk key (BEA-651): the saved
     /// preference unless it is the push-to-talk key, never the same key.
     static func latch(for ptt: PTTKey) -> PTTKey {
-        let id = LatchKeyResolver.resolve(ptt: ptt.id,
+        let id = ModeKeyResolver.resolve(ptt: ptt.id,
                                           preferred: Settings().latchKeyID)
         return all.first { $0.id == id } ?? all.first { $0.id != ptt.id }!
     }
@@ -53,7 +53,7 @@ final class HotkeyMonitor {
     var onPress: (() -> Void)?
     var onRelease: (() -> Void)?
     /// Hands-free (BEA-651): the latch key went down.
-    var onLatch: (() -> Void)?
+    var onModeTap: (() -> Void)?
     /// Hands-free: Esc pressed. Return true to swallow it (only while latched).
     var onEscape: (() -> Bool)?
 
@@ -143,7 +143,7 @@ final class HotkeyMonitor {
         if type == .flagsChanged, keyCode == latchKey.keyCode, keyCode != key.keyCode,
            let flag = latchKey.modifierFlag {
             let down = event.flags.contains(flag)
-            if down && !latchIsDown { latchIsDown = true; onLatch?() }
+            if down && !latchIsDown { latchIsDown = true; onModeTap?() }
             else if !down { latchIsDown = false }
             return false
         }
