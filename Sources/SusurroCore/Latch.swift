@@ -6,14 +6,40 @@ import Foundation
 // shows "Latching isn't supported in <app>" and the session stays hands-free.
 // Pure types only; the bridges that talk to apps live in the app target.
 
-/// How text reaches a latched target.
-public enum LatchMethod: String, Sendable, Equatable, Codable {
+/// A bridge's identity (docs/BRIDGES.md). A string-backed struct, not a
+/// closed enum: adding a bridge needs no central edit, and a future remote
+/// allowlist can name ids this build doesn't know without failing to decode.
+/// Raw values match the former `LatchMethod` cases.
+public struct BridgeID: RawRepresentable, Hashable, Codable, Sendable, CustomStringConvertible {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public init(from decoder: Decoder) throws { rawValue = try decoder.singleValueContainer().decode(String.self) }
+    public func encode(to encoder: Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
+    public var description: String { rawValue }
+
     /// Obsidian's official CLI (`obsidian eval`) driving the CM6 editor.
-    case obsidianCLI
+    public static let obsidianCLI = BridgeID(rawValue: "obsidianCLI")
     /// The running Emacs server, inserting at a marker.
-    case emacsServer
+    public static let emacsServer = BridgeID(rawValue: "emacsServer")
     /// Accessibility `kAXSelectedText` write on the remembered element.
-    case axSelectedText
+    public static let axSelectedText = BridgeID(rawValue: "axSelectedText")
+}
+
+/// Transitional name (BEA-691 bridges step 3); removed with the registry.
+public typealias LatchMethod = BridgeID
+
+/// Why a bridge call failed, distinctly (docs/BRIDGES.md §3).
+public enum BridgeError: Error, Sendable, Equatable {
+    /// Server down, socket missing, app not answering.
+    case notRunning
+    /// The app's bridge is switched off (e.g. Obsidian CLI toggle).
+    case notEnabled
+    case unsupportedVersion(found: [Int], minimum: [Int])
+    /// No latchable target in front (minibuffer, non-markdown leaf, ...).
+    case noTarget
+    case targetGone
+    case timeout
+    case malformedReply
 }
 
 /// One allowlist entry. `Codable` so a remote list can be layered on later
@@ -53,7 +79,11 @@ public struct LatchPin: Sendable, Equatable {
     /// Shown on the overlay: note or buffer name.
     public var documentName: String
     public var handle: String
-    public init(method: LatchMethod, bundleID: String, appName: String, documentName: String, handle: String) {
+    /// What the target is called in pills: "buffer", "note", "document".
+    public var documentNoun: String
+    public init(method: LatchMethod, bundleID: String, appName: String, documentName: String, handle: String,
+                documentNoun: String = "document") {
+        self.documentNoun = documentNoun
         self.method = method
         self.bundleID = bundleID
         self.appName = appName
@@ -118,7 +148,7 @@ public enum LatchDelivery {
     }
 
     public static func pillText(_ failure: LatchFailure, pin: LatchPin) -> String {
-        let what = pin.method == .emacsServer ? "the buffer" : "the note"
+        let what = "the " + pin.documentNoun
         switch failure {
         case .targetGone:
             return "Latch ended: \(pin.appName) closed \(what) — text copied"

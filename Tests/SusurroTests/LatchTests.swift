@@ -27,7 +27,7 @@ import Testing
 
 @Suite struct LatchDeliveryTests {
     let pin = LatchPin(method: .obsidianCLI, bundleID: "md.obsidian", appName: "Obsidian",
-                       documentName: "Scratch", handle: "leaf-1|Scratch.md")
+                       documentName: "Scratch", handle: "leaf-1|Scratch.md", documentNoun: "note")
 
     @Test func deliveredWhenReadBackMatches() {
         let rb = LatchReadBack(contextBefore: "Hello", inserted: " world.")
@@ -49,7 +49,7 @@ import Testing
         #expect(LatchDelivery.verify(sent: "x", readBack: nil, targetAlive: false) == .failed(.targetGone))
         #expect(LatchDelivery.verify(sent: "x", readBack: nil) == .failed(.bridgeUnavailable))
         #expect(LatchDelivery.pillText(.targetGone, pin: pin) == "Latch ended: Obsidian closed the note — text copied")
-        var emacs = pin; emacs.method = .emacsServer; emacs.appName = "Emacs"
+        var emacs = pin; emacs.method = .emacsServer; emacs.appName = "Emacs"; emacs.documentNoun = "buffer"
         #expect(LatchDelivery.pillText(.targetGone, pin: emacs) == "Latch ended: Emacs closed the buffer — text copied")
     }
 
@@ -123,5 +123,27 @@ final class FakeLatchTarget: LatchTarget, @unchecked Sendable {
         #expect(LatchDelivery.deliver(" y", to: t) == .failed(.targetGone))
         t.reachable = false
         #expect(LatchDelivery.deliver(" z", to: t) == .failed(.bridgeUnavailable))
+    }
+}
+
+@Suite struct BridgeIDTests {
+    @Test func rawValuesMatchFormerMethods() {
+        #expect(BridgeID.obsidianCLI.rawValue == "obsidianCLI")
+        #expect(BridgeID.emacsServer.rawValue == "emacsServer")
+        #expect(BridgeID.axSelectedText.rawValue == "axSelectedText")
+    }
+
+    @Test func unknownIDsDecodeForAFutureRemoteList() throws {
+        let json = #"[{"bundleID":"com.example.Editor","method":"vscodeSocket"},{"bundleID":"org.gnu.Emacs","method":"emacsServer"}]"#
+        let entries = try JSONDecoder().decode([LatchCapability].self, from: Data(json.utf8))
+        #expect(entries.map(\.method) == [BridgeID(rawValue: "vscodeSocket"), .emacsServer])
+        let data = try JSONEncoder().encode(LatchAllowlist.bundled.entries)
+        #expect(String(decoding: data, as: UTF8.self).contains(#""method":"emacsServer""#))
+    }
+
+    @Test func pillNounComesFromTheBridge() {
+        let p = LatchPin(method: .axSelectedText, bundleID: "com.apple.TextEdit", appName: "TextEdit",
+                         documentName: "Untitled", handle: "1")
+        #expect(LatchDelivery.pillText(.targetGone, pin: p) == "Latch ended: TextEdit closed the document — text copied")
     }
 }

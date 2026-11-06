@@ -52,7 +52,7 @@ struct EmacsServerBridge: AppBridge {
         guard case .value(let bufferName) = EmacsLatchLisp.decode(reply: rawEval(EmacsLatchLisp.pin(id: id), timeout: 0.5))
         else { return nil }
         return LatchPin(method: .emacsServer, bundleID: EmacsBridgeInfo.bundleID, appName: appName,
-                        documentName: bufferName, handle: String(id))
+                        documentName: bufferName, handle: String(id), documentNoun: "buffer")
     }
 
     func latchContext(_ pin: LatchPin) -> EmacsLatchLisp.Reply {
@@ -244,14 +244,14 @@ enum LatchTargets {
                 return notSupported   // not a markdown editor leaf
             }
             let pin = LatchPin(method: .obsidianCLI, bundleID: ObsidianLatchJS.bundleID, appName: appName,
-                               documentName: reply.name ?? "note", handle: reply.path ?? "")
+                               documentName: reply.name ?? "note", handle: reply.path ?? "", documentNoun: "note")
             return .pinned(ObsidianLatchTarget(pin: pin, cli: cli, id: nextID))
         case .axSelectedText?:
             guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier, let bundleID,
                   let target = AXSelectedTextLatchTarget(pid: pid, bundleID: bundleID, appName: appName)
             else { return notSupported }
             return .pinned(target)
-        case nil:
+        default:
             return notSupported
         }
     }
