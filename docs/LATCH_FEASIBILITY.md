@@ -86,6 +86,41 @@ Hold rightOption (PTT) and tap Cmd. The latch key setting already exists; Cmd be
 
 The overlay pill shows the mode (hands-free vs latch). In latch it also shows the target app's icon and name, plus the field's AX title/placeholder where available ("Slack: #general"). Clicking the pill offers Stop / Discard / Retarget-to-frontmost. A toast appears when a chunk falls back to the clipboard.
 
+## Capability detection at latch time (board question, 2026-11-06)
+
+Question: can Susurro tell, quickly and automatically, whether the app or field being latched supports full latch?
+
+**Short answer:** partly. A few milliseconds of checks when latching can rule a target **out**, or rule it **in** if it is already known. Static checks alone cannot prove that an unknown target works, because the APIs lie:
+- VS Code and Obsidian both report `kAXSelectedText` as settable. Both return `.success` and insert nothing.
+- Terminal returns `.success` for a read-only attribute.
+- No API tells you whether an app accepts `postToPid` keystrokes in the background.
+- "Is it Electron?" doesn't decide it either. Obsidian (Electron) accepts `postToPid`; VS Code (Electron) does not. Slack, VS Code, Obsidian and Hermes all bundle `Electron Framework.framework`.
+
+The only reliable proof is a write that is seen to land. Susurro must not make a test write into a real field: it pollutes undo, sends Slack typing indicators, and can fire React handlers.
+
+**Recommended: three tiers, all cheap.**
+
+1. **At the chord (target is still frontmost, ~2–5 ms):**
+   - Secure field or `IsSecureEventInputEnabled`: refuse latch.
+   - Bridge available (Emacs; later Terminal/iTerm): **full**.
+   - Look up `bundleID` (+ major version, + field role) in a capability table. The table is shipped from probe results, and the machine adds what it learns. A hit gives **full** (and which method), **clipboard-only**, or **no**.
+   - Context readability, which decides whether joins work in full: can `AXValue` and the selected range be read? `FocusedFieldReader` already does this read.
+2. **Unknown target:** latch as **unverified**. Deliver the first chunk with the best candidate method, then **verify by read-back** (value length/hash changed at the caret).
+   - Landed: record the method as working for that bundle and role.
+   - Did not land: send the chunk to the clipboard with a toast, and record the app as clipboard-only.
+   - Read-back impossible (fields that don't expose their value): stay unverified. Keep delivering and say so on the overlay; never claim success.
+   - So detection happens on the first real chunk, at no extra cost, and only once per app.
+3. **Optional self-test (Settings → "Test latch in…"):** run the spike's probe against a scratch field the user opens. Gives an answer before relying on latch in an app.
+
+**UX that follows:**
+- The second Opt+Cmd tap shows a badge on the overlay right away: **Latch ✓** (known full), **Latch ?** (unverified), or **Latch: clipboard** (known not to work).
+- If the app is known not to work, the tap could **stay in hands-free** and show "Latch not supported in Slack". The board may prefer that to latching into the clipboard.
+
+**Caveats:**
+- The table goes stale when apps update, so key it by major version and let the first-chunk verification override it.
+- Context-read success (joins) and delivery success are separate checks; report both.
+- Web pages inside a browser vary per site and per field (textarea vs contenteditable vs canvas editors). For browsers, key by role, plus the site domain where available, rather than by bundle alone.
+
 ## Performance
 
 AX write plus read-back: ~1–2 ms per chunk after the first call (36 ms cold in TextEdit). Validation adds 2–3 AX calls, each with a 50 ms messaging timeout. postToPid: ~4 ms per character with the current pacing, the same as today's typing. Negligible next to transcription. Focus hop: 150–300 ms per chunk, plus flicker.
