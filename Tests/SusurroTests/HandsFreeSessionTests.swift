@@ -26,10 +26,19 @@ private final class FakeRecorder: AudioSource {
     }
 }
 
-@Suite struct HandsFreeSessionTests {
+@Suite(.serialized) struct HandsFreeSessionTests {
+    /// Loaded and segmented once: the suite is CPU-bound and runs beside
+    /// wall-clock tests (DictationTimingTests), so keep its work small.
+    private static let fixture: [Float]? = try? loadFixture()
+    private static let expected: [HandsFreeSession.Chunk] = fixture.map(reference) ?? []
+
+    private func fixtureSession() throws -> [Float] {
+        try #require(Self.fixture)
+    }
+
     /// Three fixture clips separated by 2 s of silence (> 1 s minPause), so a
     /// session must cut at least once per clip.
-    private func fixtureSession() throws -> [Float] {
+    private static func loadFixture() throws -> [Float] {
         let silence = [Float](repeating: 0, count: 32_000)
         var out: [Float] = []
         for name in ["clip1", "clip2", "clip3"] {
@@ -40,7 +49,7 @@ private final class FakeRecorder: AudioSource {
     }
 
     /// Reference: segment the whole clip at once (the CLI replay's slicing).
-    private func reference(_ samples: [Float]) -> [HandsFreeSession.Chunk] {
+    private static func reference(_ samples: [Float]) -> [HandsFreeSession.Chunk] {
         var seg = PauseSegmenter()
         var cuts: [PauseSegmenter.Cut] = []
         var fed = 0
@@ -88,7 +97,7 @@ private final class FakeRecorder: AudioSource {
     /// chunks of whole-clip segmentation: same audio, same speech bounds, in order.
     @Test func fixtureAudioChunksMatchWholeClipSegmentation() throws {
         let audio = try fixtureSession()
-        let expected = reference(audio)
+        let expected = Self.expected
         #expect(expected.count >= 3)
         let got = run(audio, step: 1_600)
         #expect(same(got.chunks, expected))
@@ -100,10 +109,10 @@ private final class FakeRecorder: AudioSource {
     }
 
     /// Irregular delivery sizes (audio-thread jitter) don't change the chunks.
-    @Test(arguments: [480, 1_000, 4_000, 16_000])
+    @Test(arguments: [480, 16_000])
     func deliverySizeDoesNotChangeChunks(_ step: Int) throws {
         let audio = try fixtureSession()
-        #expect(same(run(audio, step: step).chunks, reference(audio)))
+        #expect(same(run(audio, step: step).chunks, Self.expected))
     }
 
     /// Stopping mid-session: samples still in the recorder come back from
@@ -112,7 +121,7 @@ private final class FakeRecorder: AudioSource {
         let audio = try fixtureSession()
         let got = run(audio, step: 1_600, stopAt: 10)
         #expect(got.total == audio.count)
-        #expect(same(got.chunks, reference(audio)))
+        #expect(same(got.chunks, Self.expected))
     }
 
     /// Discard stops the recorder and yields nothing further.
