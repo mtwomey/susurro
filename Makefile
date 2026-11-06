@@ -41,6 +41,7 @@ app:
 	@cp $(BINARY) $(APP)/Contents/MacOS/$(APP_NAME)
 	@mkdir -p $(APP)/Contents/Resources
 	@cp Support/AppIcon.icns $(APP)/Contents/Resources/
+	@cp Support/ThirdPartyNotices.txt $(APP)/Contents/Resources/
 	@cp Support/Info.plist $(APP)/Contents/Info.plist
 	@codesign --force --options runtime --entitlements Support/Susurro.entitlements --sign "$(SIGN_ID)" $(APP)
 	@echo "✓ $(APP)"

@@ -124,7 +124,8 @@ final class HelpWindowController {
         body("""
         Shows the installed version number, author, a link to the project \
         on GitHub, and the licence credit for the NVIDIA Parakeet model \
-        (CC-BY-4.0).
+        (CC-BY-4.0). Its Licenses… button opens the full licence texts of \
+        the open-source components Susurro includes.
         """)
 
         heading("Edit Rules…")
