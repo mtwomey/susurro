@@ -79,15 +79,12 @@ while let a = it.next() {
 
 /// The app's managed storage location for a catalog model (no download).
 @MainActor func managedPath(for kind: EngineKind) -> String? {
-    let id = kind == .parakeet ? ModelManager.parakeetV2ID : ModelManager.defaultModelID
-    guard let model = ModelManager.model(id: id) else { return nil }
+    let descriptor = kind.descriptor
+    guard let model = ModelManager.model(id: descriptor.defaultModelID) else { return nil }
     let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    let candidates = [
-        support.appendingPathComponent("Susurro/models/\(model.storageName)").path,
-        // FluidAudio's own cache (BEA-632 spike) — handy on dev machines.
-        support.appendingPathComponent("FluidAudio/Models/\(ModelManager.parakeetV2DirectoryName)").path,
-    ]
-    return candidates.prefix(kind == .parakeet ? 2 : 1).first { FileManager.default.fileExists(atPath: $0) }
+    let candidates = (["Susurro/models/\(model.storageName)"] + descriptor.extraLookupPaths)
+        .map { support.appendingPathComponent($0).path }
+    return candidates.first { FileManager.default.fileExists(atPath: $0) }
 }
 
 if engineKind == nil && modelPath == nil {

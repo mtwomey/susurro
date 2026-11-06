@@ -1,24 +1,5 @@
 import Foundation
 
-/// Which engine a catalog entry runs on, and therefore what its on-disk
-/// artifact looks like.
-public enum EngineKind: String, Sendable, Equatable, CaseIterable {
-    /// whisper.cpp: a single ggml `.bin` file.
-    case whisper
-    /// FluidAudio Parakeet TDT: a directory of Core ML `.mlmodelc` bundles
-    /// plus a vocabulary file. Apple Silicon only.
-    case parakeet
-
-    /// Section header for this engine's group in the Model menu (and the
-    /// Help window's description of it).
-    public var menuSectionTitle: String {
-        switch self {
-        case .whisper: "Whisper (whisper.cpp)"
-        case .parakeet: "NVIDIA Parakeet (Apple Silicon)"
-        }
-    }
-}
-
 /// One downloadable model. `storageName` is a file name for whisper models
 /// and a directory name for Core ML models, always inside `modelsDir`.
 public struct CatalogModel: Sendable, Identifiable, Equatable {
@@ -46,7 +27,7 @@ public struct CatalogModel: Sendable, Identifiable, Equatable {
 
     /// Kept for call sites written against the whisper-only catalog.
     public var fileName: String { storageName }
-    public var isDirectory: Bool { engine == .parakeet }
+    public var isDirectory: Bool { engine.capabilities.artifact == .directory }
 
     static func whisper(_ id: String, _ fileName: String, _ approxMB: Int, _ note: String) -> CatalogModel {
         CatalogModel(id: id, engine: .whisper, storageName: fileName, approxMB: approxMB,
@@ -91,9 +72,9 @@ public final class ModelManager {
         catalog.first(where: { $0.id == id })
     }
 
-    /// Catalog entries this Mac can run: Parakeet (Core ML / ANE) is Apple Silicon only.
+    /// Catalog entries this Mac can run: Core ML / ANE engines (Parakeet) are Apple Silicon only.
     public static func available(appleSilicon: Bool = isAppleSilicon) -> [CatalogModel] {
-        catalog.filter { $0.engine != .parakeet || appleSilicon }
+        catalog.filter { !$0.engine.capabilities.requiresAppleSilicon || appleSilicon }
     }
 
     /// `available()` grouped by engine, in `EngineKind` declaration order and
@@ -226,9 +207,9 @@ public final class ModelManager {
         downloadProgress[model.id] = 0
         defer { downloadProgress[model.id] = nil }
 
-        switch model.engine {
-        case .whisper: try await downloadFile(model)
-        case .parakeet: try await downloadDirectory(model)
+        switch model.engine.capabilities.artifact {
+        case .file: try await downloadFile(model)
+        case .directory: try await downloadDirectory(model)
         }
         NSLog("[susurro] model %@ downloaded", model.id)
     }
