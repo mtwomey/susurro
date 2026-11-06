@@ -83,6 +83,16 @@ final class DictationController {
             }
         }
         let pendingFieldRead = fieldTask
+        // Latch: read the context at the pin while the chunk transcribes
+        // (docs/BRIDGES.md §6), not after. This job runs only after the
+        // previous chunk's insert finished, and the session serialises calls.
+        let pendingLatchContext: Task<(LatchBridgeReply, Duration), Never>? = latch.map { session in
+            Task.detached(priority: .userInitiated) {
+                let clock = ContinuousClock(), start = clock.now
+                let reply = await session.context()
+                return (reply, clock.now - start)
+            }
+        }
         return Task.detached(priority: .userInitiated) {
             defer { withExtendedLifetime(lease) {} }
             let clock = ContinuousClock()
@@ -107,10 +117,12 @@ final class DictationController {
             let cleaned = await pipeline.cleanDictation(transcript)
             Log.transcript(raw: raw, cleaned: cleaned)
             // Latch: context at the pin (off the main actor; socket/CLI trip).
-            let latchContext = await latch?.context()
+            let latchContextResult = await pendingLatchContext?.value
+            let latchContext = latchContextResult?.0
             let fieldResult = await pendingFieldRead?.value
             let fieldRead = fieldResult?.0
-            timings.axRead = fieldResult?.1
+            // Context-read time: the AX field read, or the latch pin's context read.
+            timings.axRead = fieldResult?.1 ?? latchContextResult?.1
             let autoCapitalize = postProcessor.autoCapitalizeEnabled
             // Hands-free joins (BEA-657): hold this chunk's final mark; if the
             // previous chunk's mark is held, decide it from a joint transcript.
