@@ -64,7 +64,7 @@ final class EngineController {
         engine = nil
         setStatus("Loading model…")
         state = .loading
-        slog("loading model (\(kind?.rawValue ?? "?")): \(path)")
+        Log.engine.event("loading model (\(kind?.rawValue ?? "?")): \(path)")
         let modelName = models.activeModelID
         let loadStart = Date()
         let slow = tuning.slowLoadThreshold
@@ -81,10 +81,10 @@ final class EngineController {
             do {
                 let start = Date()
                 let engine = try TranscriptionEngines.load(modelPath: path, engine: kind)
-                slog(String(format: "model loaded in %.1fs", -start.timeIntervalSinceNow))
+                Log.engine.event(String(format: "model loaded in %.1fs", -start.timeIntervalSinceNow))
                 await MainActor.run { [weak self] in
                     guard let self, generation == self.generation else {
-                        slog("model load superseded, discarding")
+                        Log.engine.event("model load superseded, discarding")
                         return
                     }
                     self.engine = engine
@@ -95,7 +95,7 @@ final class EngineController {
                     }
                 }
             } catch {
-                slog("model load FAILED: \(error)")
+                Log.engine.failure("model load FAILED: \(error)")
                 await MainActor.run { [weak self] in
                     guard let self, generation == self.generation else { return }
                     self.state = .failed
@@ -118,7 +118,7 @@ final class EngineController {
                 self.notify("Model ready",
                             "\(model.id) downloaded — Susurro is now using it.")
             } catch {
-                slog("model download failed: \(error)")
+                Log.engine.failure("model download failed: \(error)")
                 self?.notify("Model download failed",
                              "\(model.id): \(error.localizedDescription)")
                 self?.rebuildModelMenu()
@@ -145,7 +145,7 @@ final class EngineController {
                 }
                 self.rebuildModelMenu()
             } catch {
-                slog("auto-download failed: \(error)")
+                Log.engine.failure("auto-download failed: \(error)")
                 self?.state = .failed
                 self?.setStatus("Model download failed — retry from the Model menu")
                 self?.notify("Model download failed",

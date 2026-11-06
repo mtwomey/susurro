@@ -1,18 +1,21 @@
 import Foundation
+import SusurroCore
 
-/// Per-app coverage log for the text-handling stage (BEA-648). macOS's
-/// unified log does not keep Susurro's NSLog lines, so coverage is appended
-/// to ~/Library/Logs/Susurro/text-handling.log. Lines carry the app, the
-/// context source and the AX read path with lengths/positions only — never
-/// field or transcript text.
+/// Per-app coverage log for the text-handling stage (BEA-648). Since R7
+/// (BEA-683) every dictation's structured record also goes to the unified
+/// log (`Log.dictation`); this file is kept because docs/TEXT_HANDLING_FINDINGS.md
+/// and docs/HANDSFREE_JOINS.md read coverage from it, and it outlives the
+/// unified log's retention. Each line is a `DictationRecord.line` for a
+/// dictation that reached the insert step: app, context source, AX read
+/// path with lengths/positions only — never field or transcript text.
 enum TextHandlingLog {
     static let url: URL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/Susurro/text-handling.log")
 
     static let maxBytes = 1_000_000
 
-    static func record(_ line: String) {
-        slog("ptt: context \(line)")
+    static func record(_ record: DictationRecord) {
+        let line = record.line
         let stamp = ISO8601DateFormatter().string(from: Date())
         let data = Data("\(stamp) \(line)\n".utf8)
         let fm = FileManager.default

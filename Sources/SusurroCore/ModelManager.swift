@@ -152,7 +152,7 @@ public final class ModelManager {
         guard !fm.fileExists(atPath: destination.path),
               fm.fileExists(atPath: Self.legacyModelPath) else { return }
         try? fm.copyItem(atPath: Self.legacyModelPath, toPath: destination.path)
-        NSLog("[susurro] seeded small.en from legacy whisper.cpp checkout")
+        Log.engine.event("seeded small.en from legacy whisper.cpp checkout")
     }
 
     public var activeModelID: String {
@@ -211,7 +211,7 @@ public final class ModelManager {
         case .file: try await downloadFile(model)
         case .directory: try await downloadDirectory(model)
         }
-        NSLog("[susurro] model %@ downloaded", model.id)
+        Log.engine.event("model \(model.id) downloaded")
     }
 
     private func report(_ modelID: String, _ fraction: Double) {

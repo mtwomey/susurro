@@ -80,8 +80,7 @@ public final class PostProcessor: @unchecked Sendable {
             return rules
         }
         if let rules = DefaultRules.decoded() {
-            NSLog("[susurro] rules.json unreadable at %@ — using embedded defaults",
-                  userRulesURL.path)
+            Log.textHandling.failure("rules.json unreadable at \(userRulesURL.path) — using embedded defaults")
             return rules
         }
         return nil
@@ -217,7 +216,7 @@ public final class PostProcessor: @unchecked Sendable {
         guard let regex = try? NSRegularExpression(
             pattern: pattern, options: [.caseInsensitive]
         ) else {
-            NSLog("[susurro] invalid rule pattern skipped: %@", pattern)
+            Log.textHandling.event("invalid rule pattern skipped: \(pattern)")
             return text
         }
         return regex.stringByReplacingMatches(

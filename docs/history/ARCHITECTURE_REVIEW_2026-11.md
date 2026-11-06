@@ -24,13 +24,13 @@ is unchanged from the review (commit a9a1b9f on the deleted branch
 | F11 Docs drifted | closed | R0 5a90491 (BEA-661: plans to docs/history/, ARCHITECTURE.md for 0.2.0); drifted again over R2–R6, refreshed by BEA-682 (this commit) |
 | F12 Dead code (HAL/SCK recorders, parakeet-spike) | closed | R0 5a90491 (BEA-661) |
 | F13 PostProcessor re-reads rules.json per call | won't-do | By design (live reload); cost is tiny. Add an mtime check only if it shows up in a profile |
-| F14 Logging (NSLog, TextHandlingLog) | open | R7 (os.Logger + structured per-dictation record). NSLog still used at AppDelegate.swift:7 (`slog`) and ModelManager.swift:155, among others |
+| F14 Logging (NSLog, TextHandlingLog) | closed | R7 (BEA-683): NSLog/`slog` replaced by `os.Logger` (SusurroCore Logging.swift, subsystem com.mtwomey.susurro, 4 categories); one `DictationRecord` per dictation with no text fields. text-handling.log kept (docs read coverage from it), now written from the same record |
 | F15 Concurrency annotations | won't-do | No action needed; `FocusedFieldReader.enabledPIDs` is still `nonisolated(unsafe)` behind a lock (correct). Engines stay lock-serialised, not actors |
 | F16 Branches and worktrees | closed | R0 5a90491 (BEA-661: 11 merged branches and stale worktrees removed). Remaining remote branches: the 2 kept unmerged ones (`experiment/parakeet-trailing-silence`, `prototype-voice-processing-aec`) and `spike/latch` (BEA-678); `review/architecture-2026-11` deleted by BEA-682 |
 | F17 Build and release | won't-do | No action needed; release and signing stay local (docs/releasing.md), CI has no signing steps |
 
 Refactor plan: R0–R6 done (R0 5a90491, R1 5ba6f16, R2 da5579f, R3 cc839c9,
-R4 f7c370c + b1f215b, R5 d87ca79, R6 9d0398b). R7 and R8 are open.
+R4 f7c370c + b1f215b, R5 d87ca79, R6 9d0398b). R7 done in BEA-683 (os.Logger + per-dictation record); R8 is open.
 
 Also open: the wall-clock `CappedRead` test in DictationTimingTests failed
 once on CI at the R4 merge (f7c370c, CI run 42176342630) when the CPU-bound

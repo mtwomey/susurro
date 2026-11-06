@@ -429,7 +429,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
                 toast.show("Will start at login")
             }
         } catch {
-            slog("login item toggle failed: \(error)")
+            Log.dictation.failure("login item toggle failed: \(error)")
             toast.show("Couldn't change login item: \(error.localizedDescription)")
         }
     }

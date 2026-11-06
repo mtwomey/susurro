@@ -3,10 +3,6 @@ import AVFoundation
 import Carbon.HIToolbox
 import SusurroCore
 
-func slog(_ msg: String) {
-    NSLog("[susurro] %@", msg)
-}
-
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -69,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         feed: { [unowned self] samples, pid, bundleID in
             self.insertionQueue.enqueue { [weak self] in
                 await self?.dictation.transcribeAndInsert(samples, releasePID: pid, releaseBundleID: bundleID,
-                                                expectedPID: nil)?.value
+                                                expectedPID: nil, trigger: .devFeed)?.value
             }
         },
         probeInputs: { [unowned self] pid in
@@ -94,7 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Request mic permission up front, decoupled from the first recording,
         // so the permission dialog can't interrupt an in-flight engine start.
         AVCaptureDevice.requestAccess(for: .audio) { granted in
-            slog("mic permission granted=\(granted)")
+            Log.dictation.event("mic permission granted=\(granted)")
             if !granted {
                 Task { @MainActor [weak self] in
                     self?.statusMenu.micDenied()
@@ -118,14 +114,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.handsFree.reset()
                     self.hfEnd(insert: true, reason: nil)
                     self.toast.show("Hands-free stopped — microphone changed")
-                    slog("handsfree: interrupted by audio configuration change")
+                    Log.handsfree.event("interrupted by audio configuration change")
                     return
                 }
                 self.handsFree.reset()
                 _ = self.recorder.stop()
                 self.overlay.hide()
                 self.toast.show("Recording interrupted — microphone changed")
-                slog("recording interrupted by audio configuration change")
+                Log.dictation.event("recording interrupted by audio configuration change")
             }
         }
 
@@ -143,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if HotkeyMonitor.ensureAccessibility(prompt: true), hotkey.start() {
             hotkeyGranted()
         } else {
-            slog("accessibility not granted yet — polling")
+            Log.dictation.event("accessibility not granted yet — polling")
             statusMenu.setHotkeyStatus("grant Accessibility in System Settings")
             axPollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
                 Task { @MainActor [weak self] in
@@ -159,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func hotkeyGranted() {
-        slog("event tap active")
+        Log.dictation.event("event tap active")
         statusMenu.setHotkeyStatus("hold \(hotkey.key.title) to dictate")
     }
 
@@ -172,10 +168,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         do {
             try recorder.start()
-            slog("ptt: recording")
+            Log.dictation.event("recording")
             overlay.show()
         } catch {
-            slog("ptt: recorder.start failed: \(error)")
+            Log.dictation.failure("recorder.start failed: \(error)")
         }
     }
 
@@ -183,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard recorder.isRecording else { return }
         let samples = recorder.stop()
         overlay.hide()
-        slog("ptt: stopped (\(samples.count) samples), transcribing")
+        Log.dictation.event("stopped (\(samples.count) samples), transcribing")
         let releaseApp = NSWorkspace.shared.frontmostApplication
         let pid = releaseApp?.processIdentifier, bundleID = releaseApp?.bundleIdentifier
         // Queued behind any earlier dictation (PTT or a hands-free tail), so
@@ -233,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dictation.joiner = HeldMarkJoiner()
         dictation.prevChunk = nil
         overlay.setHandsFree(true)
-        slog("handsfree: latched")
+        Log.handsfree.event("latched")
         hfTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             Task { @MainActor [weak self] in self?.hfPump() }
         }
@@ -263,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func hfDispatch(_ info: HFChunk) {
         let chunk = info.samples
-        slog("handsfree: chunk \(chunk.count) samples")
+        Log.handsfree.event("chunk \(chunk.count) samples")
         let generation = dictation.gate.token
         let pid = hfPID, bundleID = hfBundleID
         // Chunks are transcribed and typed strictly in order, in the same
@@ -301,7 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dictation.joiner.discard() // and the held mark with them
             dictation.prevChunk = nil
         }
-        slog("handsfree: ended insert=\(insert) reason=\(String(describing: reason)) samples=\(hfSession.total)")
+        Log.handsfree.event("ended insert=\(insert) reason=\(String(describing: reason)) samples=\(hfSession.total)")
         switch reason {
         case .idle?: toast.show("Hands-free stopped — no speech for 60 s")
         case .safetyLimit?: toast.show("Hands-free stopped — 2-hour limit")
