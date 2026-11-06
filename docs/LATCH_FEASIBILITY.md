@@ -275,3 +275,34 @@ If the board still wants latch (narrow GO): revised effort **about 4 days**. Mac
 - **Sequencing:** no wait. BEA-660 R1–R8, BEA-677 and v0.2.0 are all done (origin/main 812c8d1).
 - **Passive learning:** wanted, and always on (no setting) **if** the spike shows it is reliable, with no double or partial inserts.
 - **Refused or ended latch:** keep recording in hands-free.
+
+## Review of BEA-689 and the v1 scope (BEA-678, 2026-11-06)
+
+Board direction: build latch now, but **only engage where full functionality is already known**, and implement the Obsidian bridge described above. Nothing more general for now.
+
+**Re-checks for this review (own runs, not the probe's self-report):**
+- **Obsidian CLI bridge:** `/usr/local/bin/obsidian` → `obsidian-cli`; `~/.obsidian-cli.sock` exists; `"cli": true`. A read-only `obsidian eval` (active file path + markdown leaf count) returned in **158 ms including process spawn**, with **Zen frontmost before and after**, so Obsidian was not brought forward. Version note: the bundle's `CFBundleShortVersionString` is 1.13.7 (the installer version), while the doc above cites 1.14.5 (the app version). Capability gating must use the app version, which can be read through the CLI.
+- **Emacs:** the bridge in main is **read-only** (`textBeforeCursor`), so latch needs a new insert path. Verified that a background insert works: an `emacsclient -e` into a hidden scratch buffer at a **marker** returned `("Xalpha [latch]" 8)`. The marker moved from 7 to 8 when text was inserted before it, so markers keep the target position through concurrent user edits. The buffer was killed afterwards (nil), and Zen stayed frontmost.
+- TextEdit passed criteria 1–3 in BEA-689. **Undo is unverified** and Notes is unprobed.
+
+**Review findings:**
+- The Obsidian result is solid. It is the only Electron app with a path that passes all four criteria, and only through the bridge.
+- Emacs now has verified background delivery with tracked positions. Context for joins must be read at the pinned marker, not at `point` of the current buffer as today.
+- Inconsistency in the BEA-689 text: the go/no-go header says NO-GO, while its own update says bridges change the picture. The board decision below supersedes it.
+- Still unverified: the Opt+Cmd chord with PTT held (needs a person), TextEdit/Notes undo, Slack/Hermes/Zen.
+
+**v1 scope (allowlist only):**
+
+| Target | Method | Status for v1 |
+|---|---|---|
+| Obsidian (markdown editor leaf) | `ObsidianBridge`: CLI `eval`, pinned by leaf id + file, position mapped through edits | **On** (needs the CLI toggle; otherwise the pill tells the user how to enable it) |
+| Emacs (buffer) | `EmacsServerBridge` + insert at a pinned marker | **On** |
+| TextEdit | AX `kAXSelectedText` + read-back | **On only if** the in-app undo check passes in the build; otherwise off |
+| Notes | AX | Off until probed |
+| Everything else | – | Pill "Latching isn't supported in <app>"; stays in hands-free |
+
+Deferred, still wanted by the board, separate follow-ups:
+- the remote capability list
+- the "Test <app>" self-test
+- passive AX learning
+- further bridges (VS Code extension, Terminal/iTerm AppleScript)
