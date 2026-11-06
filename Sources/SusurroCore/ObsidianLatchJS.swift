@@ -93,8 +93,10 @@ public enum ObsidianLatchJS {
         return parts.isEmpty ? nil : parts
     }
 
-    /// The CLI's `eval` shipped in 1.12; gate below that.
-    public static let minimumVersion = [1, 12, 0]
+    /// Full support or nothing: the lowest app version this bridge has been
+    /// verified on (1.14.5, BEA-691 live test). Older versions are refused
+    /// with the CLI pill until verified.
+    public static let minimumVersion = [1, 14, 5]
     public static func supported(_ version: [Int]) -> Bool {
         version.lexicographicallyPrecedes(minimumVersion) == false
     }

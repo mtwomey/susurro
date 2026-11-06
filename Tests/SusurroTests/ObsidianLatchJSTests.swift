@@ -23,8 +23,8 @@ import Testing
     @Test func versionGateUsesAppVersion() {
         #expect(ObsidianLatchJS.appVersion("1.14.5 (installer 1.13.7)") == [1, 14, 5])
         #expect(ObsidianLatchJS.supported([1, 14, 5]))
-        #expect(ObsidianLatchJS.supported([1, 12, 0]))
-        #expect(!ObsidianLatchJS.supported([1, 11, 9]))
+        #expect(ObsidianLatchJS.supported([1, 15]))
+        #expect(!ObsidianLatchJS.supported([1, 14, 4]))
         #expect(ObsidianLatchJS.appVersion("") == nil)
     }
 

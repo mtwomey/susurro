@@ -152,20 +152,95 @@ final class EmacsLatchTarget: LatchTarget, @unchecked Sendable {
     func release() { bridge.latchRelease(pin) }
 }
 
+/// Obsidian through its official CLI (`obsidian eval`), BEA-691. Each call
+/// spawns the CLI (~60 ms `version`, ~150 ms eval measured) with arguments
+/// passed directly (no shell). The socket (`~/.obsidian-cli.sock`) is not
+/// used: its protocol is undocumented and the CLI is fast enough per chunk.
+struct ObsidianCLI: Sendable {
+    var path = "/usr/local/bin/obsidian"
+    var timeout: TimeInterval = 3
+
+    func run(_ args: [String]) -> String? {
+        guard FileManager.default.isExecutableFile(atPath: path) else { return nil }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = args
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = out
+        do { try p.run() } catch { return nil }
+        let deadline = Date().addingTimeInterval(timeout)
+        while p.isRunning && Date() < deadline { usleep(5_000) }
+        if p.isRunning { p.terminate(); return nil }
+        return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+    }
+
+    func eval(_ js: String) -> ObsidianLatchJS.Reply? {
+        run(["eval", "code=" + js]).flatMap(ObsidianLatchJS.decode)
+    }
+
+    /// The app version from the CLI (not the bundle short version); nil
+    /// when the CLI is missing or disabled.
+    func appVersion() -> [Int]? { run(["version"]).flatMap(ObsidianLatchJS.appVersion) }
+}
+
+final class ObsidianLatchTarget: LatchTarget, @unchecked Sendable {
+    let pin: LatchPin
+    private let cli: ObsidianCLI
+    private let id: Int
+
+    init(pin: LatchPin, cli: ObsidianCLI, id: Int) {
+        self.pin = pin
+        self.cli = cli
+        self.id = id
+    }
+
+    private static func map(_ reply: ObsidianLatchJS.Reply?, _ value: (ObsidianLatchJS.Reply) -> String?) -> LatchBridgeReply {
+        guard let reply else { return .unavailable }
+        if reply.gone == true { return .gone }
+        return value(reply).map { .value($0) } ?? .unavailable
+    }
+
+    func context() -> LatchBridgeReply { Self.map(cli.eval(ObsidianLatchJS.context(id: id))) { $0.ctx } }
+    func insert(_ text: String) -> LatchBridgeReply {
+        Self.map(cli.eval(ObsidianLatchJS.insert(id: id, text: text))) { $0.back }
+    }
+    func release() { _ = cli.eval(ObsidianLatchJS.release(id: id)) }
+}
+
+enum LatchPinResult {
+    case pinned(any LatchTarget)
+    case refused(pill: String)
+}
+
 @MainActor
 enum LatchTargets {
     private static var nextID = Int(Date().timeIntervalSince1970) % 100_000
     /// Pin the frontmost app's target if it is on the bundled allowlist and
-    /// its bridge can pin right now; nil = refuse (pill, stay hands-free).
-    static func pin(bundleID: String?, appName: String) -> (any LatchTarget)? {
+    /// its bridge can pin right now; otherwise refuse with the pill to show
+    /// (the session stays hands-free). Blocks briefly (socket/CLI).
+    static func pin(bundleID: String?, appName: String) -> LatchPinResult {
+        let notSupported = LatchPinResult.refused(pill: LatchDelivery.notSupportedPill(appName: appName))
+        nextID += 1
         switch LatchAllowlist.bundled.method(for: bundleID) {
         case .emacsServer?:
-            nextID += 1
             let bridge = EmacsServerBridge()
-            guard let pin = bridge.latchPin(id: nextID, appName: appName) else { return nil }
-            return EmacsLatchTarget(pin: pin, bridge: bridge)
-        case .obsidianCLI?, .axSelectedText?, nil:
-            return nil   // Obsidian bridge lands next (BEA-691 M5)
+            guard let pin = bridge.latchPin(id: nextID, appName: appName) else { return notSupported }
+            return .pinned(EmacsLatchTarget(pin: pin, bridge: bridge))
+        case .obsidianCLI?:
+            let cli = ObsidianCLI()
+            guard let version = cli.appVersion() else { return .refused(pill: ObsidianLatchJS.cliOffPill) }
+            guard ObsidianLatchJS.supported(version) else {
+                return .refused(pill: "Latching needs Obsidian 1.14.5 or later")
+            }
+            guard let reply = cli.eval(ObsidianLatchJS.pin(id: nextID)), reply.ok == true else {
+                return notSupported   // not a markdown editor leaf
+            }
+            let pin = LatchPin(method: .obsidianCLI, bundleID: "md.obsidian", appName: appName,
+                               documentName: reply.name ?? "note", handle: reply.path ?? "")
+            return .pinned(ObsidianLatchTarget(pin: pin, cli: cli, id: nextID))
+        case .axSelectedText?, nil:
+            return notSupported
         }
     }
 }

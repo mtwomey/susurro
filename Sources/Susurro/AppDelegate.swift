@@ -260,9 +260,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let app = NSWorkspace.shared.frontmostApplication
         let name = app?.localizedName ?? "this app"
         // Full support or nothing: allowlisted app whose bridge pins now.
-        guard hfTimer != nil, app?.processIdentifier == hfPID,
-              let target = LatchTargets.pin(bundleID: app?.bundleIdentifier, appName: name) else {
-            toast.show(LatchDelivery.notSupportedPill(appName: name))
+        let result: LatchPinResult = (hfTimer != nil && app?.processIdentifier == hfPID)
+            ? LatchTargets.pin(bundleID: app?.bundleIdentifier, appName: name)
+            : .refused(pill: LatchDelivery.notSupportedPill(appName: name))
+        guard case .pinned(let target) = result else {
+            if case .refused(let pill) = result { toast.show(pill) }
             Log.handsfree.event("latch refused")
             _ = hfEvent(.latchRefused)
             return
