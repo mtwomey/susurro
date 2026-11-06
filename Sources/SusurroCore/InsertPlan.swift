@@ -128,3 +128,30 @@ public struct InsertPlan: Equatable, Sendable {
         return plan
     }
 }
+
+extension InsertPlan.Join {
+    /// The join state a hands-free step leaves for the insert decision
+    /// (nil / fresh / unresolved = no join).
+    public init(_ step: DictationPipeline.HandsFreeStep?) {
+        self.init()
+        if case .joined(let held, let decision, _, let joined)? = step {
+            joinedText = joined
+            previousBody = held.body
+            previousShown = held.shown
+            previousMark = held.mark
+            self.decision = decision
+        }
+    }
+}
+
+extension DictationPipeline.HandsFreeStep {
+    /// The chunk's own text to insert: the fresh text, the next chunk's words
+    /// after a join, or `cleaned` when nothing was decided.
+    public func pieceText(cleaned: String) -> String {
+        switch self {
+        case .fresh(let text): return text
+        case .joined(_, _, let next, _): return next
+        case .unresolved: return cleaned
+        }
+    }
+}

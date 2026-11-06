@@ -932,12 +932,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let autoCapitalize = postProcessor.autoCapitalizeEnabled
             // Hands-free joins (BEA-657): hold this chunk's final mark; if the
             // previous chunk's mark is held, decide it from a joint transcript.
-            var joinedText: String?
-            var heldBody: String?
-            var heldShown = false
-            var heldMark: Character = "."
-            var joinDecision: HandsFreeJoin.Decision = .unmatched
-            var processed = cleaned
+            var hfStep: DictationPipeline.HandsFreeStep?
             if let hfChunk, !cleaned.isEmpty {
                 let step = await MainActor.run { [weak self] () -> (HeldMarkJoiner.Plan, HFChunk?)? in
                     // Cancelled while this chunk was transcribing: leave the
@@ -949,27 +944,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     return (plan, previous)
                 }
                 if let step {
-                    let (plan, previous) = step
                     var jointTime: Duration?
-                    let result = try? pipeline.handsFreeStep(plan, previous: previous, current: hfChunk,
-                                                             jointSeconds: &jointTime, failedJointAsEmpty: true)
+                    hfStep = try? pipeline.handsFreeStep(step.0, previous: step.1, current: hfChunk,
+                                                         jointSeconds: &jointTime, failedJointAsEmpty: true)
                     if let jointTime { timings.joinTranscribe = jointTime }
-                    switch result {
-                    case .fresh(let text)?:
-                        processed = text
-                    case .joined(let held, let decision, let next, let joined)?:
+                    if case .joined(let held, let decision, _, _)? = hfStep {
                         slog("handsfree: join decision=\(decision) held=\(held.mark)")
-                        joinedText = joined
-                        heldBody = held.body
-                        heldShown = held.shown
-                        heldMark = held.mark
-                        joinDecision = decision
-                        processed = next
-                    default:
-                        break
                     }
                 }
             }
+            let processed = hfStep?.pieceText(cleaned: cleaned) ?? cleaned
             // Cross-dictation join (BEA-677): a separate dictation right after
             // Susurro's previous one. Decide the previous full stop from a
             // joint clip now; the field guards run before insertion.
@@ -986,9 +970,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let jointTime { timings.joinTranscribe = jointTime }
             }
             let crossDecision = xDecision
-            let joinText = joinedText
-            let join = InsertPlan.Join(joinedText: joinedText, previousBody: heldBody, previousShown: heldShown,
-                                       previousMark: heldMark, decision: joinDecision)
+            let join = InsertPlan.Join(hfStep)
+            let joinText = join.joinedText
             let isHandsFree = hfChunk != nil
             let stageTimings = timings
             await MainActor.run { [weak self] in
