@@ -1,3 +1,5 @@
+import AppKit
+import ApplicationServices
 import Foundation
 import SusurroCore
 
@@ -208,6 +210,76 @@ final class ObsidianLatchTarget: LatchTarget, @unchecked Sendable {
     func release() { _ = cli.eval(ObsidianLatchJS.release(id: id)) }
 }
 
+/// TextEdit latch through Accessibility (BEA-691): `kAXSelectedText` write on
+/// the element focused at latch time, re-validated before each chunk, read
+/// back from the value. NOT on the bundled allowlist: it is enabled only if
+/// the in-app undo check passes (needs Matthew's go-ahead; it takes focus).
+final class AXSelectedTextLatchTarget: LatchTarget, @unchecked Sendable {
+    let pin: LatchPin
+    private let element: AXUIElement
+    private let pid: pid_t
+
+    init?(pid: pid_t, bundleID: String, appName: String) {
+        let app = AXUIElementCreateApplication(pid)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+        let element = focused as! AXUIElement
+        guard Self.string(element, kAXRoleAttribute) == kAXTextAreaRole as String else { return nil }
+        var window: CFTypeRef?
+        _ = AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &window)
+        let title = window.flatMap { w in CFGetTypeID(w) == AXUIElementGetTypeID() ? Self.string(w as! AXUIElement, kAXTitleAttribute) : nil }
+        self.element = element
+        self.pid = pid
+        self.pin = LatchPin(method: .axSelectedText, bundleID: bundleID, appName: appName,
+                            documentName: title ?? "document", handle: String(pid))
+    }
+
+    private static func string(_ e: AXUIElement, _ attr: String) -> String? {
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(e, attr as CFString, &v) == .success else { return nil }
+        return v as? String
+    }
+
+    private func selection() -> CFRange? {
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &v) == .success,
+              let v, CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
+        var range = CFRange()
+        return AXValueGetValue(v as! AXValue, .cfRange, &range) ? range : nil
+    }
+
+    /// Re-validate: same process, still a text area with a window.
+    private func alive() -> Bool {
+        var p: pid_t = 0
+        guard AXUIElementGetPid(element, &p) == .success, p == pid,
+              Self.string(element, kAXRoleAttribute) == kAXTextAreaRole as String else { return false }
+        var window: CFTypeRef?
+        return AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &window) == .success
+    }
+
+    func context() -> LatchBridgeReply {
+        guard alive() else { return .gone }
+        guard let value = Self.string(element, kAXValueAttribute), let sel = selection() else { return .unavailable }
+        let ns = value as NSString
+        let start = max(0, min(sel.location, ns.length) - 200)
+        return .value(ns.substring(with: NSRange(location: start, length: min(sel.location, ns.length) - start)))
+    }
+
+    func insert(_ text: String) -> LatchBridgeReply {
+        guard alive() else { return .gone }
+        guard let sel = selection(),
+              AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString) == .success,
+              let value = Self.string(element, kAXValueAttribute) else { return .unavailable }
+        let ns = value as NSString
+        let len = (text as NSString).length
+        guard sel.location + len <= ns.length else { return .value("") }
+        return .value(ns.substring(with: NSRange(location: sel.location, length: len)))
+    }
+
+    func release() {}
+}
+
 enum LatchPinResult {
     case pinned(any LatchTarget)
     case refused(pill: String)
@@ -239,7 +311,12 @@ enum LatchTargets {
             let pin = LatchPin(method: .obsidianCLI, bundleID: "md.obsidian", appName: appName,
                                documentName: reply.name ?? "note", handle: reply.path ?? "")
             return .pinned(ObsidianLatchTarget(pin: pin, cli: cli, id: nextID))
-        case .axSelectedText?, nil:
+        case .axSelectedText?:
+            guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier, let bundleID,
+                  let target = AXSelectedTextLatchTarget(pid: pid, bundleID: bundleID, appName: appName)
+            else { return notSupported }
+            return .pinned(target)
+        case nil:
             return notSupported
         }
     }
