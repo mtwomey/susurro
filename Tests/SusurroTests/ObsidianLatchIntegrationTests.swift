@@ -10,13 +10,9 @@ import Testing
 struct ObsidianLatchIntegrationTests {
     static let note = "susurro-latch-it-scratch.md"
 
+    /// Shipping transport (ProcessRunner), stdout only.
     func eval(_ js: String) -> String {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/local/bin/obsidian")
-        p.arguments = ["eval", "code=" + js]
-        let out = Pipe(); p.standardOutput = out; p.standardError = out
-        try? p.run(); p.waitUntilExit()
-        return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        ProcessRunner().run("/usr/local/bin/obsidian", ["eval", "code=" + js], timeout: 5)?.stdout ?? ""
     }
 
     @Test func pinInsertMapsThroughEditsAndDetectsClose() {

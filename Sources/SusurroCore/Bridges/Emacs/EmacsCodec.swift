@@ -10,6 +10,32 @@ public enum EmacsBridgeInfo {
 
 /// The Emacs server's line protocol (what emacsclient speaks).
 public enum EmacsServerProtocol {
+    /// The running server's socket, where emacsclient looks for it; nil
+    /// unless the server is running (`M-x server-start`).
+    public static func socketPath() -> String? {
+        var candidates: [String] = []
+        if let xdg = ProcessInfo.processInfo.environment["XDG_RUNTIME_DIR"] {
+            candidates.append(xdg + "/emacs/server")
+        }
+        var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
+        if confstr(_CS_DARWIN_USER_TEMP_DIR, &buf, buf.count) > 0 {
+            let tmp = String(cString: buf)
+            candidates.append((tmp.hasSuffix("/") ? tmp : tmp + "/") + "emacs\(getuid())/server")
+        }
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+    }
+
+    /// One `-eval` over the server socket via the shipping transport.
+    public static func eval(_ lisp: String, timeout: TimeInterval) -> String? {
+        guard let path = socketPath() else { return nil }
+        let request = Data(("-eval " + quote(lisp) + "\n").utf8)
+        let reply = UnixSocketClient(path: path).request(request, timeout: timeout) { data in
+            guard let text = String(data: data, encoding: .utf8) else { return false }
+            return printedString(reply: text) != nil || text.contains("-error ")
+        }
+        return reply.flatMap { String(data: $0, encoding: .utf8) }
+    }
+
     public static func quote(_ s: String) -> String {
         var out = s.replacingOccurrences(of: "&", with: "&&")
             .replacingOccurrences(of: "\n", with: "&n")

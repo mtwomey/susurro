@@ -38,18 +38,7 @@ struct EmacsServerBridge: AppBridge {
 
     private var expression: String { EmacsReadLisp.textBeforeCursor(maxChars: maxChars) }
 
-    func socketPath() -> String? {
-        var candidates: [String] = []
-        if let xdg = ProcessInfo.processInfo.environment["XDG_RUNTIME_DIR"] {
-            candidates.append(xdg + "/emacs/server")
-        }
-        var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
-        if confstr(_CS_DARWIN_USER_TEMP_DIR, &buf, buf.count) > 0 {
-            let tmp = String(cString: buf)
-            candidates.append((tmp.hasSuffix("/") ? tmp : tmp + "/") + "emacs\(getuid())/server")
-        }
-        return candidates.first { FileManager.default.fileExists(atPath: $0) }
-    }
+    func socketPath() -> String? { EmacsServerProtocol.socketPath() }
 
     func textBeforeCursor() -> String? {
         rawEval(expression).flatMap(EmacsServerProtocol.parse(reply:))
@@ -83,43 +72,7 @@ struct EmacsServerBridge: AppBridge {
 
     /// One `-eval` request on the server socket; the raw reply text.
     private func rawEval(_ lisp: String, timeout: TimeInterval? = nil) -> String? {
-        let timeout = timeout ?? self.timeout
-        guard let path = socketPath() else { return nil }
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return nil }
-        defer { close(fd) }
-        var tv = timeval(tv_sec: Int(timeout), tv_usec: Int32((timeout - Double(Int(timeout))) * 1_000_000))
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        let pathBytes = Array(path.utf8)
-        guard pathBytes.count < MemoryLayout.size(ofValue: addr.sun_path) else { return nil }
-        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
-            raw.copyBytes(from: pathBytes)
-            raw[pathBytes.count] = 0
-        }
-        let connected = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard connected == 0 else { return nil }
-        let request = Array(("-eval " + EmacsServerProtocol.quote(lisp) + "\n").utf8)
-        guard request.withUnsafeBytes({ send(fd, $0.baseAddress, $0.count, 0) }) == request.count else { return nil }
-        var reply = Data()
-        var chunk = [UInt8](repeating: 0, count: 4096)
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            let n = recv(fd, &chunk, chunk.count, 0)
-            if n <= 0 { break }
-            reply.append(contentsOf: chunk[0..<n])
-            if let text = String(data: reply, encoding: .utf8),
-               EmacsServerProtocol.printedString(reply: text) != nil || text.contains("-error ") {
-                return text
-            }
-        }
-        return String(data: reply, encoding: .utf8)
+        EmacsServerProtocol.eval(lisp, timeout: timeout ?? self.timeout)
     }
 }
 
@@ -154,19 +107,9 @@ struct ObsidianCLI: Sendable {
     var path = "/usr/local/bin/obsidian"
     var timeout: TimeInterval = 3
 
+    /// stdout only: CLI diagnostics on stderr must never be parsed as a reply.
     func run(_ args: [String]) -> String? {
-        guard FileManager.default.isExecutableFile(atPath: path) else { return nil }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: path)
-        p.arguments = args
-        let out = Pipe()
-        p.standardOutput = out
-        p.standardError = out
-        do { try p.run() } catch { return nil }
-        let deadline = Date().addingTimeInterval(timeout)
-        while p.isRunning && Date() < deadline { usleep(5_000) }
-        if p.isRunning { p.terminate(); return nil }
-        return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+        ProcessRunner().run(path, args, timeout: timeout)?.stdout
     }
 
     func eval(_ js: String) -> ObsidianLatchJS.Reply? {

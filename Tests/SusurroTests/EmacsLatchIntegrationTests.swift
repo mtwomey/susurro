@@ -9,19 +9,14 @@ import Testing
 struct EmacsLatchIntegrationTests {
     static let buf = " *susurro-latch-test*"
 
-    func eval(_ lisp: String) -> String {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/Applications/Emacs.app/Contents/MacOS/bin/emacsclient")
-        p.arguments = ["-e", lisp]
-        let out = Pipe(); p.standardOutput = out; p.standardError = out
-        try? p.run(); p.waitUntilExit()
-        return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    /// Shipping transport (UnixSocketClient), not emacsclient.
+    func run(_ lisp: String) -> EmacsLatchLisp.Reply {
+        EmacsLatchLisp.decode(reply: EmacsServerProtocol.eval(lisp, timeout: 2))
     }
 
-    /// emacsclient -e prints the Lisp string with quotes; reuse the decoder.
-    func decode(_ printed: String) -> EmacsLatchLisp.Reply {
-        EmacsLatchLisp.decode(reply: "-print " + EmacsServerProtocol.quote(printed + "\n") + "\n")
+    /// Setup/inspection helpers: raw printed value via the same transport.
+    func eval(_ lisp: String) -> String {
+        EmacsServerProtocol.eval(lisp, timeout: 2).flatMap(EmacsServerProtocol.printedString(reply:)) ?? ""
     }
 
     @Test func markerInsertReadBackTracksEditsAndDetectsKill() {
@@ -31,18 +26,18 @@ struct EmacsLatchIntegrationTests {
         (with-current-buffer (get-buffer-create "\(Self.buf)") (erase-buffer) (insert "Hello") \
         (defvar \(sym) nil) (setq \(sym) (copy-marker (point-max) t)) t)
         """)
-        #expect(decode(eval(EmacsLatchLisp.context(id: id))) == .value("Hello"))
-        #expect(decode(eval(EmacsLatchLisp.insert(id: id, text: " world."))) == .value(" world."))
+        #expect(run((EmacsLatchLisp.context(id: id))) == .value("Hello"))
+        #expect(run((EmacsLatchLisp.insert(id: id, text: " world."))) == .value(" world."))
         // User edits before the marker; the marker must track them.
         _ = eval("(with-current-buffer \"\(Self.buf)\" (goto-char (point-min)) (insert \"Say: \") t)")
-        #expect(decode(eval(EmacsLatchLisp.insert(id: id, text: " Ünïcode \"q\" & (x)"))) == .value(" Ünïcode \"q\" & (x)"))
+        #expect(run((EmacsLatchLisp.insert(id: id, text: " Ünïcode \"q\" & (x)"))) == .value(" Ünïcode \"q\" & (x)"))
         let whole = eval("(with-current-buffer \"\(Self.buf)\" (buffer-string))")
-        #expect(whole == "\"Say: Hello world. Ünïcode \\\"q\\\" & (x)\"")
+        #expect(whole == "Say: Hello world. Ünïcode \\\"q\\\" & (x)")
         // Buffer closed: GONE, nothing written anywhere.
         _ = eval("(kill-buffer \"\(Self.buf)\")")
-        #expect(decode(eval(EmacsLatchLisp.insert(id: id, text: "lost"))) == .gone)
-        #expect(decode(eval(EmacsLatchLisp.context(id: id))) == .gone)
-        #expect(decode(eval(EmacsLatchLisp.release(id: id))) == .value("OK"))
-        #expect(eval("(boundp '\(sym))") == "nil")
+        #expect(run((EmacsLatchLisp.insert(id: id, text: "lost"))) == .gone)
+        #expect(run((EmacsLatchLisp.context(id: id))) == .gone)
+        #expect(run((EmacsLatchLisp.release(id: id))) == .value("OK"))
+        #expect(eval("(if (boundp '\(sym)) \"t\" \"nil\")") == "nil")
     }
 }
