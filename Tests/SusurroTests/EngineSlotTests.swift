@@ -55,7 +55,7 @@ final class Flags: @unchecked Sendable {
         #expect(lease != nil)
         let job = Task.detached { [lease] () -> String in
             startedCont.yield()
-            return try withExtendedLifetime(lease) { try lease!.engine.transcribe(samples: [0]) }
+            return try await offPool { try withExtendedLifetime(lease) { try lease!.engine.transcribe(samples: [0]) } }
         }
         for await _ in started { break }
         // Swap: load starts (retire), new engine installed.
@@ -90,7 +90,7 @@ final class Flags: @unchecked Sendable {
             guard let lease = slot.lease() else { return nil }
             return Task.detached {
                 defer { withExtendedLifetime(lease) {} }
-                let text = (try? lease.engine.transcribe(samples: [0])) ?? "<failed>"
+                let text = (try? await offPool { try lease.engine.transcribe(samples: [0]) }) ?? "<failed>"
                 await queue.enqueue { inserted.items.append(text) }.value
             }
         }
@@ -119,4 +119,13 @@ func eventually(_ cond: @Sendable () -> Bool) async -> Bool {
         try? await Task.sleep(for: .milliseconds(5))
     }
     return cond()
+}
+
+/// Run blocking fake-engine work on a GCD thread, never a cooperative-pool
+/// thread: a gated fake blocking the pool would starve wall-clock tests
+/// (DictationTimingTests' CappedRead) on the 3-core CI runner.
+func offPool<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    try await withCheckedThrowingContinuation { cont in
+        DispatchQueue.global().async { cont.resume(with: Result { try work() }) }
+    }
 }
