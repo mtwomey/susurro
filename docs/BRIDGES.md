@@ -1,180 +1,199 @@
 # App bridges: target architecture (BEA-691)
 
-Status: **proposed, for board approval before implementation.** It replaces
-the ad-hoc layout on `feature/latch-v1` (one `AppBridges.swift`, a closed
-`LatchMethod` enum, and a `switch` in `LatchTargets.pin`). Behaviour does not
-change. Only the structure, plus two performance improvements, called out
-below.
+Status: **final recommendation, for board approval before implementation.**
+It reconciles my own review (first draft 731bf3f) with an independent review
+by a separate agent that saw only the code and the requirements (2026-11-06,
+read-only). Where the two differed, the reason for the choice is given in
+§9. Every defect in §1 was re-checked against the code before being listed.
 
-## 1. What a bridge is
+## 1. Defects in the current branch (fix before merge, whatever the layout)
 
-A bridge is the per-app code that lets Susurro talk to one app through that
-app's own channel. Today there are three: the Emacs server socket, the
-Obsidian CLI, and Accessibility for TextEdit. A bridge can offer one or both
-capabilities:
+1. **Pinning blocks the whole keyboard.** The mode-key tap is handled
+   synchronously inside the CGEvent tap callback on the main thread
+   (`HotkeyMonitor.swift:97-103` → `onModeTap` → `hfRequestLatch` →
+   `LatchTargets.pin`). An Obsidian pin spawns the CLI twice (version, then
+   eval), which holds up all keyboard input on the system for about 200 ms,
+   and up to 2 × 3 s on timeout. macOS disables a tap that stalls that long.
+   `release()` on Esc, push-to-talk or a mode cycle has the same problem.
+2. **A failed latch can lose text.** Chunks already queued keep a reference
+   to the released target. Each one fails again, and `hfLatchFailed`
+   (`AppDelegate.swift:291`) **replaces** the clipboard each time and shows
+   another pill. The first failed chunk's words are lost.
+3. **Release races with insert.** `release()` runs on main while a queue job
+   may be inserting into the same target off main.
+4. **Blocking I/O on Swift's cooperative thread pool.** Socket and process
+   waits of up to 3 s run in `Task.detached`. The repo's own CappedRead
+   lesson says to use GCD for blocking work. The latch path also has no
+   per-call time budget.
 
-| Capability | Used by | Hot path? | Contract |
-|---|---|---|---|
-| **Context read**: text before the cursor | every dictation into that app (spacing, joins) | yes, inside the 250 ms read cap | blocking, off main; nil = "can't answer quickly", and the generic AX path then applies |
-| **Latch**: pin a document position, then per chunk read context, insert, read back, release | latch sessions only | per chunk, off main, inside the ordered insertion queue | blocking, off main; replies `value / gone / unavailable` |
+## 2. Correction to my earlier rule
 
-Apps without a bridge pay one dictionary lookup and nothing else: no
-sockets, no processes, no observers.
+The first draft assumed SusurroCore must not do I/O. That was wrong. The
+actual rule from the November review is **"no AppKit UI in SusurroCore"**:
+Core already records audio (AVAudioEngine) and downloads models
+(URLSession). The Emacs socket client and the Obsidian process runner need
+only Foundation, so they belong in Core, where tests can reach them.
 
-## 2. Forces and the rules they lead to
+## 3. Rules
 
-1. **Keep the project's module rule** (2026-11 architecture review, R2/R3).
-   `SusurroCore` holds pure, tested logic plus the *protocols* (seams);
-   the `Susurro` app holds the *OS adapters* (AppKit, AX, sockets,
-   processes). This is how `Inserter`/`Clipboard`/`FrontmostAppProvider`
-   (Core) and `SystemSeams.swift` (app) already work. Bridges follow the same
-   rule. That is why each bridge has two halves in two modules (§4). My
-   previous comment proposed moving all bridge I/O into Core. That would
-   break this rule, and I withdraw it.
-2. **Keep policy separate from mechanism.** Whether latch may engage in an
-   app is *policy*: the allowlist, later a remote list and self-test
-   results. How to talk to the app is *mechanism*: the bridge. A bridge can
-   exist without being enabled. TextEdit is the current example.
-3. **Open for extension.** Adding a bridge must not mean editing a central
-   `enum` + `switch`. Bridges are identified by a string `id`, and the
-   allowlist names that id.
-4. **Hostile input never becomes code.** Dictated text is only ever
-   base64 (Lisp) or a JSON string literal (JS). The builders and parsers are
-   pure and unit-tested, which is a second reason the codec half lives in
-   Core.
-5. **Per-latch state lives in a session object**, not in stateless calls
-   that take a pin. Each `LatchTarget` owns its handle (marker, leaf id, AX
-   element) and its transport, and releases them. This is better than the
-   ticket's suggested `insert(_:at: pin)` form: lifecycle and cleanup sit in
-   one place, and persistent connections become possible.
-6. **Don't over-engineer.** No dynamic plugin loading, no actors around
-   blocking I/O, no async wrappers over synchronous sockets. The review
-   already ruled out a plugin system.
+- **Capabilities, not one fat protocol.** `ContextReadingBridge` and
+  `LatchingBridge` on a common `AppBridge`. The compiler then shows what
+  each bridge supports; nothing silently returns nil.
+- **Policy separate from mechanism.** The allowlist (bundle ID → bridge id +
+  minimum version) decides *whether*; the bridge decides *how*. Latch engages
+  only if the allowlist entry exists, the bridge is compiled in, the version
+  passes and the pin succeeds. A future remote list can only narrow (revoke,
+  raise the minimum), never enable code that isn't shipped.
+- **Bridges stay synchronous; one place makes them async.** A per-latch
+  `LatchSession` actor runs every bridge call on its own serial GCD queue.
+  That means off the main thread, off the cooperative pool, in strict order
+  (release included), and with a time budget on each call.
+- **Each latch is a session object** that owns its handle (marker, leaf id,
+  AX element) and transport, and releases them once. This is better than
+  stateless `insert(_:at: pin)` calls, because lifecycle and cleanup sit in
+  one place.
+- **Dictated text never becomes code.** Only base64 (Lisp) or a JSON literal
+  (JS), built by tested functions in the bridge's codec file.
+- **Typed errors** (`BridgeError`: notRunning, notEnabled,
+  unsupportedVersion, noTarget, targetGone, timeout, malformedReply) and a
+  typed `LatchRefusal`. Core turns these into pill text, so every refusal
+  path is unit-tested.
 
-## 3. Contracts (SusurroCore)
+## 4. Contracts (sketch)
 
 ```swift
-// Bridges/BridgeContracts.swift
+public struct BridgeID: RawRepresentable, Hashable, Codable, Sendable { public let rawValue: String }
+
 public protocol AppBridge: Sendable {
-    static var id: String { get }            // "emacs", "obsidian", "ax-selected-text"
-    var bundleIDs: Set<String> { get }       // apps it can talk to
+    var id: BridgeID { get }
+    var bundleIDs: Set<String> { get }
 }
 public protocol ContextReadingBridge: AppBridge {
-    func textBeforeCursor() -> String?       // blocking, off main, fast or nil
+    func textBeforeCursor() -> String?          // blocking, off main, inside the 250 ms cap
 }
 public protocol LatchingBridge: AppBridge {
-    /// App frontmost. Pins the caret target or explains why not.
-    func pin(_ request: LatchPinRequest) -> LatchPinResult
+    var documentNoun: String { get }            // "buffer" / "note" / "document"
+    func pin(token: LatchToken, appName: String) throws(BridgeError) -> any LatchTarget
 }
-public struct LatchPinRequest: Sendable { pid; bundleID; appName }
-public enum LatchPinResult { case pinned(any LatchTarget), refused(pill: String) }
-public protocol LatchTarget: AnyObject, Sendable {   // unchanged
-    var pin: LatchPin { get }
-    func context() -> LatchBridgeReply
-    func insert(_ text: String) -> LatchBridgeReply
+public protocol LatchTarget: AnyObject, Sendable {
+    var pin: LatchPin { get }                   // display data only
+    func context() throws(BridgeError) -> String
+    func insert(_ text: String) throws(BridgeError) -> String   // exact read-back
     func release()
 }
-
-// Bridges/LatchPolicy.swift: policy only, Codable for a later remote layer
-public struct LatchCapability: Codable { bundleID; bridgeID: String; minVersion: String? }
-public struct LatchAllowlist { static let bundled; func bridgeID(for bundleID:) -> String? }
-
-// Latch/LatchDelivery.swift: unchanged, bridge-agnostic (verify, failure → clipboard + pill + hands-free)
+public actor LatchSession {                     // executor = private serial DispatchQueue
+    static func engage(bundleID:appName:allowlist:registry:) async -> Result<LatchSession, LatchRefusal>
+    func context(budget: Duration) -> Result<String, LatchFailure>
+    func deliver(_ text: String, budget: Duration) -> LatchDelivery.Outcome
+    func release()                              // once; later calls fail fast without touching the app
+}
 ```
 
-These are capability protocols, not one protocol with dummy defaults. Emacs
-conforms to both. Obsidian is latch-only. Its context read for ordinary
-dictation stays on AX, as today, and adding one later is just a conformance.
-The AX bridge is latch-only.
-
-## 4. Layout
-
-Each bridge has one **codec** file (Core: pure builders and parsers, unit
-tested) and one **adapter** file (app: the I/O). The two folders mirror each
-other. Shared transports are written once.
+## 5. Layout: one folder
 
 ```
 Sources/SusurroCore/Bridges/
-  BridgeContracts.swift        protocols above
-  LatchPolicy.swift            allowlist (bundled; remote later)
-  Emacs/EmacsCodec.swift       emacsclient quoting, Lisp builders, reply decode  (was EmacsServerProtocol + EmacsLatchLisp)
-  Obsidian/ObsidianCodec.swift JS builders, JSON literal, reply decode, version gate (was ObsidianLatchJS)
-Sources/SusurroCore/Latch/
-  LatchDelivery.swift          delivery policy + LatchPin/ReadBack/Failure (from Latch.swift)
-
-Sources/Susurro/Bridges/
-  BridgeRegistry.swift         the ONE list: [EmacsBridge(), ObsidianBridge(), AXSelectedTextBridge()]
-                               byBundleID dictionary built once; contextReader(for:), latchPin(for:)
-  Transport/UnixSocketClient.swift   request/response with deadline (from the Emacs code; reusable, e.g. a VS Code extension socket)
-  Transport/ProcessRunner.swift      spawn with timeout and bounded output (from ObsidianCLI; reusable, e.g. osascript for Terminal/iTerm)
-  Emacs/EmacsBridge.swift      ContextReadingBridge + LatchingBridge; EmacsLatchTarget
-  Obsidian/ObsidianBridge.swift LatchingBridge; ObsidianLatchTarget
-  AX/AXSelectedTextBridge.swift LatchingBridge (generic AX; serves whatever the allowlist names, none today)
+  AppBridge.swift            protocols, BridgeID, BridgeError
+  BridgeRegistry.swift       the ONE list of bridges; bundleID → bridge, built once (O(1) lookup)
+  LatchPolicy.swift          bundled allowlist (Codable; remote layer later), engage decision, pill texts
+  LatchSession.swift         actor on a serial DispatchQueue: order, budgets, single failure, idempotent release
+  LatchDelivery.swift        read-back verification (moved from Latch.swift)
+  Transports/
+    UnixSocketClient.swift   request/response with deadline (Emacs; later a VS Code extension socket)
+    ProcessRunner.swift      spawn + timeout + separate stderr (Obsidian CLI; later osascript for Terminal/iTerm)
+  Emacs/
+    EmacsCodec.swift         emacsclient quoting, read + latch Lisp, reply decode
+    EmacsBridge.swift        ContextReadingBridge + LatchingBridge; its LatchTarget
+  Obsidian/
+    ObsidianCodec.swift      JS snippets, JSON literal, reply decode, version gate
+    ObsidianBridge.swift     LatchingBridge; its LatchTarget; app version cached per pid
+  AX/
+    AXSelectedTextBridge.swift  LatchingBridge (registered, not allowlisted: TextEdit's undo check failed)
 ```
 
+The app module (`Sources/Susurro`) keeps **no bridge code**. Two call sites
+use the registry: `FocusedFieldReader` for the context read, and AppDelegate
+for engaging latch. `AppBridges.swift`, `EmacsServerProtocol.swift`,
+`ObsidianLatchJS.swift`, the `LatchMethod` enum and the `switch` are deleted.
+
 **Adding a bridge:**
-1. Write a codec (if it speaks a language) and an adapter file.
+1. Create one folder holding a codec file (if the bridge speaks a language)
+   and a bridge file.
 2. Add one line to `BridgeRegistry`.
-3. Add one allowlist entry, only once it passes the full-support checks.
+3. Add one allowlist entry, only after it passes the full-support checks.
 
-There is no central switch to edit.
+A shared **conformance checklist** covers pin, exact read-back with
+unicode, quotes and newlines, mapping through a concurrent edit, gone after
+close, and release. It runs against fakes in CI and against the real apps in
+the opt-in live suites. It is also what the future "Test <app>" self-test
+(BEA-693) will run.
 
-**Call sites:** `FocusedFieldReader` uses `BridgeRegistry.contextReader(for:)`.
-`AppDelegate.hfRequestLatch` uses `BridgeRegistry.latchPin(for:)`, which
-checks the allowlist and then calls the bridge's `pin`. Nothing else in the
-app knows bridges exist.
+## 6. Performance
 
-## 5. Performance
+- Apps without a bridge cost one dictionary lookup.
+- Engaging latch moves off the event-tap callback. The tap returns at once,
+  the overlay shows hands-free while the pin runs, and the latch appears when
+  the pin succeeds. If the frontmost app changed in the meantime, the latch
+  is refused.
+- A latched chunk's context read starts **while the chunk is still
+  transcribing**, not after. That hides one round trip per chunk (about
+  60–150 ms on Obsidian). The insert still re-validates the target and reads
+  back.
+- Obsidian: the app version is cached per process, so a pin needs one CLI
+  spawn instead of two. The CLI stays the transport. The undocumented socket
+  is not reverse-engineered; it would be a drop-in `ProcessRunner`
+  replacement only if Obsidian documents it.
+- Emacs: one socket connection per call is correct (the server protocol is
+  one request per connection; about 2 ms to connect).
 
-- **Lookup:** a dictionary keyed by bundle ID, built once. Bridges are
-  stateless values, so there is no per-dictation allocation.
-- **Context read concurrent with transcription (new).** Today a latched
-  chunk reads the pin's context *after* transcription, which adds one
-  bridge round trip to every chunk: about 60–150 ms for Obsidian (process
-  spawn), 2–35 ms for Emacs. Start it when the chunk is dispatched, in
-  parallel with transcription, exactly as the AX field read already works.
-  The insert still re-validates the target and reads back, so a user edit in
-  between can't cause a wrong-place insert. At worst the spacing is planned
-  from slightly stale context, the same trade-off the AX path makes today.
-- **Obsidian transport.** Each call spawns the CLI (measured: `version`
-  62 ms, `eval` about 150 ms). The adapter talks only through
-  `ProcessRunner`. If the undocumented `~/.obsidian-cli.sock` proves faster
-  and stable, a persistent per-latch connection can replace it inside
-  `ObsidianBridge` alone. I won't build that before measuring.
-- **Never on main:** pin happens once per latch, at the user's tap. Context
-  and insert run inside the queue job, off main, as today.
+## 7. Smaller fixes included
 
-## 6. Ownership fixes (deviations from the ticket)
+- Pin tokens come from a launch nonce plus a counter, not `time % 100000`.
+  On pin, the bridge sweeps up pins left by a previous crash: Emacs markers,
+  Obsidian `__susurroLatch` entries and the editor wrapper.
+- The pill noun comes from the bridge ("buffer" / "note" / "document").
+  TextEdit would otherwise say "note".
+- Bundle IDs and the Obsidian minimum version are defined once.
+  `@unchecked Sendable` is removed where it isn't needed. Obsidian reply
+  parsing no longer reads stderr. The CLI path is resolved, not hard-coded.
 
-- The ticket puts latch state, pin and validation in `HandsFreeSession`.
-  Today `AppDelegate` holds `hfLatch` and `DictationController` runs the
-  latch path. Move the pin and its lifecycle (pin, release on stop, discard,
-  push-to-talk, or failure) into a small `LatchSession` owned by the
-  hands-free session. AppDelegate then only forwards events and draws the
-  overlay.
-- The ticket says to extend `AppBridge`. §3 does that through capability
-  protocols on one `AppBridge` base, instead of the separate, parallel
-  `LatchTarget`-only path built so far.
+## 8. Not doing
 
-## 7. Not doing (deliberately)
+- Runtime-loaded plugins, XPC helpers, one SwiftPM target per bridge.
+- A generic "AX for any app" latch: it fails "full support or nothing".
+- Async wrappers inside each bridge: the session does that once.
+- Merging the context read and insert into one smart call that plans
+  spacing inside the app.
+- A remote list, self-test or passive learning: those are BEA-692 to
+  BEA-694. The types are shaped so they plug in later.
 
-- Runtime-loaded plugins or a bridge SDK: the review ruled this out, and it
-  would add attack surface.
-- Async/actor wrappers around blocking sockets and processes: no benefit;
-  callers are already off main and serialised by the queue.
-- A remote list, self-test or passive learning: out of scope, filed as
-  BEA-692 to BEA-694. §3's `LatchCapability` is shaped so they plug in
-  without touching bridges.
+## 9. Where the two reviews differed, and the choice
 
-## 8. Migration (behaviour-identical, tests green at each step)
+| Topic | First draft | Independent review | Choice and reason |
+|---|---|---|---|
+| I/O location | app module | Core | **Core.** The real rule is "no AppKit UI"; Core already does I/O, and tests can then reach the transports (§2). |
+| Concurrency | no actor, "callers are off main" | session actor on a serial GCD queue | **Actor.** The draft missed defects 1–4; the actor fixes all four in one place. |
+| Pin location | at the tap | async, off the tap | **Async.** Defect 1. |
+| Errors | value/gone/unavailable | typed `BridgeError` / `LatchRefusal` | **Typed.** Distinct pills, and every refusal path can be tested. |
+| AX bridge module | app | app (needs AX/TCC) | **Core.** ApplicationServices is not AppKit UI, and permission belongs to the process, not the module. One folder. |
 
-1. Extract `UnixSocketClient` and `ProcessRunner`; Emacs and Obsidian use them.
-2. Add the contracts and `BridgeRegistry`; move each bridge into its own
-   adapter file and each codec into its Core file. Delete `AppBridges.swift`,
-   `LatchMethod` and the switch.
-3. Allowlist moves from method enum to `bridgeID`. Update the tests.
-4. Add `LatchSession` and move pin ownership out of AppDelegate.
-5. Start the context read concurrently with transcription (the only
-   behaviour-visible change: lower latency).
-6. Verify: full suite, both live scratch tests (Emacs and Obsidian), CI, and
-   a rebuild of the test build for a hands-on check.
+## 10. Migration (tests green after every step)
+
+1. Constants and codecs into `Core/Bridges` (exact-string tests).
+2. Transports into Core behind protocols, with a fake-socket framing test.
+   The live suites use the shipping transports.
+3. `BridgeID`, `BridgeError` and the pill noun. Pill wording stays identical.
+4. Registry + `LatchPolicy.engage` in Core, with a test for every refusal
+   path. Delete the switch and `AppBridges.swift`.
+5. `LatchSession`, test-first: one pill and **appended** clipboard text
+   after a mid-session failure; release ordered after an in-flight insert;
+   no bridge call after the session ends. Then engage asynchronously, off the
+   tap callback. This step fixes defects 1–4.
+6. Start the context read concurrently with transcription; measure the gain
+   with `StageTimings`.
+7. Pin tokens and the leftover-pin sweep (live suites).
+8. ARCHITECTURE and spike docs updated.
+
+**Verify:** full suite, both live scratch suites (Emacs, Obsidian), CI, a
+fresh test build for a hands-on check. **Estimate:** about one working day
+of agent runs.
