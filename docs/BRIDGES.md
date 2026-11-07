@@ -168,7 +168,7 @@ the opt-in live suites. It is also what the future "Test <app>" self-test
 - Merging the context read and insert into one smart call that plans
   spacing inside the app.
 - A remote list, self-test or passive learning: those are BEA-692 to
-  BEA-694. The types are shaped so they plug in later.
+  BEA-694 (see the sections below). The types are shaped so they plug in later.
 
 ## 9. Where the two reviews differed, and the choice
 
@@ -268,3 +268,37 @@ marker and records the result locally.
   driver need focus changes and typing into a real app, which can't be run or
   verified unattended; the copy (`actionTitle`, `instruction`, result `pill`)
   is in core and tested.
+
+## Passive learning (BEA-694)
+
+`Sources/SusurroCore/Bridges/LatchPassiveLearning.swift`. The core of
+"passive (no user effort)" qualification from LATCH_FEASIBILITY.md: during
+ordinary **frontmost** dictation in an unlisted app, try each chunk as an AX
+`kAXSelectedText` write, read the field back, and record the outcome per
+(bundle ID, field role, app version) without user action.
+
+- **Attempt gate** (`shouldAttempt`): selected text settable, value + caret
+  readable, no secure field, no secure input. Settable is only a filter, not a
+  predictor (VS Code and Obsidian report settable and silently no-op).
+- **Classifier** (`classify`): from the before/after read-backs only, never an
+  API return code. `.all` = old value with exactly the chunk spliced in at the
+  caret and the caret after it; `.none` = value and caret unchanged; anything
+  else, including an unreadable read-back, is `.partial`.
+- **Fallback rule** (`needsTypedFallback`): type the chunk the normal way
+  only after a proven `.none`. After `.partial` nothing is typed or deleted
+  (typing could double it; the spike saw 0 partials in 23 trials).
+- **Ledger** (`LatchPassiveLedger`, `LatchPassiveStore` at
+  `~/Library/Application Support/Susurro/latch-passive.json`): text-free
+  counts only (successes / no-ops / partials, date). Verdict: any partial →
+  `unsafe`; any no-op → `notCapable` (full support or nothing); 5 clean
+  inserts (`candidateThreshold`) → `candidate`; otherwise `learning`. Field
+  roles are tallied separately (a canvas editor inside a supported app). A new
+  app version starts over; a query for another version reads `recheckNeeded`.
+- **Candidate is advisory** (`admitsLatch == false`). Frontmost observation
+  proves context, read-back and AX insertion, but cannot see identity after
+  focus loss or background delivery, so a candidate at most points the user to
+  the guided self-test (BEA-693); it never reaches `LatchPolicy.engage`.
+- **Off and not wired** (`enabledByDefault == false`). Hooking it into the
+  insertion path changes how text reaches every unlisted app; it needs the
+  frontmost live run on Slack, Hermes and Zen first (the spike covered only
+  TextEdit, VS Code, Obsidian and Warp), and that run takes the user's focus.
