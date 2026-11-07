@@ -34,8 +34,11 @@ import Testing
         #expect(ITermScript.isValidSessionID("w0t0p0:6F1A2B3C-0000-4D5E-8F90-ABCDEF012345"))
     }
 
-    @Test func iTermIsNotRegisteredOrAllowlisted() {
+    @Test func iTermIsLatchOnlyAndNotAllowlisted() {
+        // BEA-700: registered as a latch bridge, but not allowlisted until a
+        // read-back source exists and the live suite passes.
         #expect(BridgeRegistry.standard.contextReader(for: ITermScript.bundleID) == nil)
+        #expect(BridgeRegistry.standard.latchBridge(.itermSession) != nil)
         #expect(LatchAllowlist.bundled.entry(for: ITermScript.bundleID) == nil)
         #expect(LatchAllowlist.bundled.entry(for: "com.apple.Terminal") == nil)
         #expect(LatchAllowlist.bundled.entry(for: "com.microsoft.VSCode") == nil)
