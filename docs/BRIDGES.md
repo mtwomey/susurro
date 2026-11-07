@@ -232,3 +232,39 @@ it never fetches.
   cookies/identifiers, plain GET of one static file), the cache path
   (`~/Library/Application Support/<bundle id>/latch-capabilities.json`) and a
   persisted serial floor — decisions left to the board.
+
+## Guided self-test: "Test <app>" (BEA-693)
+
+`Sources/SusurroCore/Bridges/LatchSelfTest.swift`. The core of the guided
+self-test from LATCH_FEASIBILITY.md "Capability detection": the user puts the
+caret in a scratch field, Susurro runs the four-criteria probe, removes its
+marker and records the result locally.
+
+- **Probe** (`LatchSelfTest.run`): pin the focused field → read value + caret
+  (*context*) → move the target to the background → element still valid and
+  caret unchanged (*identity*) → deliver a zero-width-wrapped marker
+  (`susurro-probe-<nonce>`, nonce from `LatchToken`, never input) and read the
+  value back: it must equal the old value with exactly the marker spliced in at
+  the caret (*background delivery*; an API success that inserts nothing fails)
+  → caret after the marker (*read-back*) → remove the marker and confirm the
+  field is back to its original value. Stops at the first failure.
+- **Never a blind delete:** if the field changed but not by exactly the marker,
+  nothing is removed; the result says `markerLeftBehind` and the pill asks the
+  user to delete it.
+- **Side effects** go through `LatchProbeDriver` (pin, background, validity,
+  context, deliver, remove). Fakes in `LatchSelfTestTests`; the AX /
+  `postToPid` drivers belong in the app target.
+- **Record** (`LatchSelfTestStore`): `~/Library/Application Support/Susurro/latch-selftests.json`,
+  one result per bundle ID, text-free (criteria, pass/fail, reason, app version,
+  method, date; never field content or the marker). Version-tied: a pass for
+  another version reads `.recheckNeeded`.
+- **Advisory in this build.** `LatchSelfTestStore.admitsLatch == false`: a
+  local pass does not reach `LatchPolicy.engage`. Full support or nothing, and
+  no validating delivery path exists yet for non-bridge apps (the AX bridge
+  failed TextEdit's undo check in BEA-691). Wiring a pass into the policy is a
+  board decision; when it happens, a remote revocation (BEA-692) must still
+  override a local pass.
+- **Not wired into the UI yet.** The "Test <app>" pill action and the AX
+  driver need focus changes and typing into a real app, which can't be run or
+  verified unattended; the copy (`actionTitle`, `instruction`, result `pill`)
+  is in core and tested.
