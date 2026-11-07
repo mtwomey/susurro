@@ -302,3 +302,29 @@ ordinary **frontmost** dictation in an unlisted app, try each chunk as an AX
   insertion path changes how text reaches every unlisted app; it needs the
   frontmost live run on Slack, Hermes and Zen first (the spike covered only
   TextEdit, VS Code, Obsidian and Warp), and that run takes the user's focus.
+
+## Further bridges: probe verdicts (BEA-695)
+
+The four criteria (LATCH_FEASIBILITY.md): **context** (read text + caret at
+the pin), **identity** (the pinned target survives focus loss), **background
+delivery** (text lands with the app in the background, exactly), **read-back**
+(the result can be verified exactly). Full support or nothing: an app joins
+`LatchAllowlist.bundled` only when all four pass on a live run. This pass was
+done unattended (Matthew away), so it used only what needs no focus: AppleScript
+dictionaries (`sdef`, which does not launch the app), compile checks
+(`osacompile`) and the BEA-691 spike results. **No app was added to the
+allowlist and no bridge was registered.**
+
+| App | Mechanism | Context | Identity | Delivery | Read-back | Verdict |
+|---|---|---|---|---|---|---|
+| Terminal.app | AppleScript `do script` | screen only, no caret | tab/tty: yes | **always runs the text as a command** | screen only | **Never.** No non-executing write exists; delivery = command execution. |
+| iTerm2 | AppleScript `write text … newline no` to a session by `id` | `contents` = visible screen, no caret | session `id`: yes | yes, keystroke-equivalent into the pty | **no**: screen text is rendered output; readline/zsh editing, autosuggest and full-screen programs (vim, REPLs, Claude Code) transform or consume input | **Not allowlisted.** Fails read-back; delivery into a running program is unverifiable. Safe delivery shape kept in `Bridges/ITerm/ITermCodec.swift` (argv-only text, `newline no`, newline refused, pinned session id), tested, not registered. |
+| VS Code | extension + local socket, `TextEditor.edit` on a pinned `TextDocument` + `document.getText()` read-back | yes (in extension) | yes (document URI + tracked offset) | yes | yes | **Feasible, not built.** Needs a VS Code extension shipped and installed into the user's VS Code: a distribution decision (marketplace vs side-load, signing, auto-update), see open decisions. The Swift side reuses `UnixSocketClient` exactly like Emacs. |
+| Notes.app | AX (`AXTextArea` in a WebKit-ish view) | unprobed | unprobed | unprobed | unprobed | **Unprobed.** A real probe means creating a scratch note and putting the caret in it (takes focus); queued as a hands-on check. AppleScript `body` is HTML of the whole note, no caret: no latch via scripting. |
+| TextEdit | AX `kAXSelectedText` (`AXSelectedTextBridge`) | yes | yes | yes | yes | **Still not allowlisted:** failed the undo check in BEA-691; unchanged. |
+| Slack, Warp, Hermes | none known | — | — | — | — | No bridge; only the passive/guided paths (BEA-693/694) could ever qualify them. |
+
+Hands-on checks queued for Matthew (each takes focus):
+1. Notes: scratch note, run the BEA-693 four-criteria probe via AX.
+2. iTerm (only if he wants terminals at all): confirm the read-back verdict on
+   a scratch session at a bare prompt.
