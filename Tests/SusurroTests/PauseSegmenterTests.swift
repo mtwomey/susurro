@@ -43,7 +43,7 @@ import Testing
 
     @Test func singleShortWordIsCutAtThePause() {
         // Board device test (BEA-651): one short word then a pause must be
-        // typed at the pause, not held until the 25 s cap.
+        // typed at the pause, not held until the forced cap.
         var s = PauseSegmenter()
         let cuts = s.append(Self.silence(1.0) + Self.tone(0.3) + Self.silence(2.0))
         #expect(cuts.count == 1 && cuts[0].hasSpeech)

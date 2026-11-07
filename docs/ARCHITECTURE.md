@@ -177,7 +177,7 @@ Sources/
                               finish (flush the last segment), discard. Pure;
                               tested with fixture audio
     PauseSegmenter.swift      incremental pause cutter over 16 kHz samples: adaptive
-                              noise floor, minPause 1.0 s, minSpeech 0.1 s, 25 s cap
+                              noise floor, minPause 1.0 s, minSpeech 0.1 s, 10 s cap
                               (cut at quietest frame); contiguous cuts, no audio lost
     HandsFreeJoin.swift       joins across a pause: holdMark, jointClip (A's last
                               speech + real pause + B's first speech), decide
