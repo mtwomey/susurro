@@ -16,10 +16,14 @@ public struct PauseSegmenter: Sendable {
         /// Speech needed in a segment before a pause may end it. Low enough
         /// for a single short word ("Yes." is ~0.4 s of speech frames; the
         /// board's device test found 0.6 s left one-word chunks waiting until
-        /// the 25 s cap), high enough to ignore a click or a key tap.
+        /// the then-25 s cap), high enough to ignore a click or a key tap.
         public var minSpeech: Double = 0.1
-        /// Hard cap; a longer segment is cut at its quietest frame.
-        public var maxSegment: Double = 25
+        /// Hard cap; a longer segment is cut at its quietest frame in its
+        /// second half, so continuous speech (a conference call) shows text
+        /// every ~5-10 s. 10 s (was 25) by board choice on BEA-691: measured
+        /// no accuracy cost vs 25 s on a 102 s pause-free stream; below ~8 s
+        /// formatting drift rose.
+        public var maxSegment: Double = 10
         /// Frame RMS below this is always silence.
         public var minThreshold: Float = 0.004
         /// Speech must be this many times louder than the tracked noise floor.

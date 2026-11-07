@@ -54,7 +54,7 @@ import Testing
         let t = Tuning.default
         #expect(t.segmenter == PauseSegmenter.Config())
         #expect(t.segmenter.minPause == 1.0)
-        #expect(t.segmenter.maxSegment == 25)
+        #expect(t.segmenter.maxSegment == 10)   // BEA-691: was 25
         #expect(t.handsFreeSafetyLimit == 7_200)
         #expect(t.handsFreeIdleLimit == 60)
         #expect(t.handsFreeWarningLead == 10)
