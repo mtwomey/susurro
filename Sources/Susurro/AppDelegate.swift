@@ -284,7 +284,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = hfEvent(.latchRefused)
             return
         }
-        let request = LatchPinRequest(pid: app.processIdentifier, bundleID: bundleID, appName: name, token: token)
+        let version = app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary?["CFBundleShortVersionString"] as? String }
+        let request = LatchPinRequest(pid: app.processIdentifier, bundleID: bundleID, appName: name, token: token,
+                                      appVersion: LatchAllowlist.parseVersion(version))
         let icon = app.icon
         DispatchQueue.global(qos: .userInitiated).async {
             let result = LatchPolicy.engage(request)

@@ -44,9 +44,20 @@ public enum BridgeError: Error, Sendable, Equatable {
 public struct LatchCapability: Sendable, Equatable, Codable {
     public var bundleID: String
     public var method: BridgeID
-    public init(bundleID: String, method: BridgeID) {
+    /// Lowest app version latch may engage on (BEA-692); nil = any. When
+    /// set and the running app's version is unknown, latch does not engage.
+    public var minAppVersion: [Int]?
+    public init(bundleID: String, method: BridgeID, minAppVersion: [Int]? = nil) {
         self.bundleID = bundleID
         self.method = method
+        self.minAppVersion = minAppVersion
+    }
+
+    /// Full support or nothing: an unknown version fails a set minimum.
+    public func admits(appVersion: [Int]?) -> Bool {
+        guard let minAppVersion else { return true }
+        guard let appVersion else { return false }
+        return !appVersion.lexicographicallyPrecedes(minAppVersion)
     }
 }
 
@@ -62,8 +73,21 @@ public struct LatchAllowlist: Sendable, Equatable {
     public init(entries: [LatchCapability]) { self.entries = entries }
 
     public func method(for bundleID: String?) -> BridgeID? {
+        entry(for: bundleID)?.method
+    }
+
+    public func entry(for bundleID: String?) -> LatchCapability? {
         guard let bundleID else { return nil }
-        return entries.first { $0.bundleID == bundleID }?.method
+        return entries.first { $0.bundleID == bundleID }
+    }
+
+    /// Parse "1.14.5" (CFBundleShortVersionString) into [1, 14, 5]; nil if
+    /// any component is not a plain number.
+    public static func parseVersion(_ string: String?) -> [Int]? {
+        guard let string, !string.isEmpty else { return nil }
+        let parts = string.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
+        guard parts.allSatisfy({ $0 != nil }) else { return nil }
+        return parts.compactMap { $0 }
     }
 }
 
