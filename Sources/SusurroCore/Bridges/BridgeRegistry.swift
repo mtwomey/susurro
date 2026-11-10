@@ -9,6 +9,7 @@ public struct BridgeRegistry: Sendable {
         EmacsBridge(),
         ObsidianBridge(),
         AXSelectedTextBridge(),
+        ITermBridge(),   // BEA-700: not allowlisted; no read-back source yet
     ])
 
     private let contextByBundle: [String: any ContextReadingBridge]

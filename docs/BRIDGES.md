@@ -328,3 +328,31 @@ Hands-on checks queued for Matthew (each takes focus):
 1. Notes: scratch note, run the BEA-693 four-criteria probe via AX.
 2. iTerm (only if he wants terminals at all): confirm the read-back verdict on
    a scratch session at a bare prompt.
+
+### iTerm2 bridge (BEA-700, in progress)
+
+Matthew asked for iTerm2 on BEA-691 (shell prompt, AI agent CLIs, editors, ssh).
+`Bridges/ITerm/ITermBridge.swift` + `ITermLatchPolicy.swift`, registered as a
+latch bridge (`itermSession`), **not allowlisted** yet.
+
+- Pin: the frontmost window's current session `id` plus its foreground
+  `jobName` (iTerm per-session variable).
+- Before every chunk (one extra osascript spawn): session alive, `jobName`
+  unchanged and allowed; otherwise `.gone` → latch ends, text to clipboard, pill.
+- Never Enter: the codec refuses any chunk with a newline/CR.
+- Programs (`ITermProgram`): v1 allows shells (zsh/bash/fish/sh/…, login
+  "-zsh" form) and agent CLIs by process name (claude, hermes, codex, …).
+  Bare `node`/`python` are refused (could be a REPL that evaluates lines).
+  Editors (vim/nvim/nano/emacs) and ssh/mosh/tmux/screen are refused with a pill
+  — open decisions, see below.
+- Read-back (`ITermScreen`): the text before the cursor on the cursor's logical
+  line, rebuilt from screen rows (joining soft-wrapped rows via `hard_eol`) and
+  the cursor cell (wide chars = 2 cells); the chunk must be its suffix. The
+  source is `ITermScreenReading`, meant to be the Python API; with no source the
+  pin is refused ("turn on the Python API"), so latch never types blind.
+
+Open decisions: (1) require the Python API for read-back (conservative, current)
+vs accept AppleScript `contents` (screen text, no cursor) as a weaker fallback;
+(2) editors stay refused unless a mode-safe method is proven; (3) ssh stays
+refused (remote program invisible); (4) the real `jobName` of each agent CLI must
+be confirmed live (node-hosted agents may report `node`, which is refused).
